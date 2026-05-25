@@ -41,7 +41,6 @@ class RussianTextNormalizer:
             normalized_text=" ".join(normal_forms),
         )
 
-
 @lru_cache(maxsize=1)
 def get_text_normalizer() -> RussianTextNormalizer:
     return RussianTextNormalizer()

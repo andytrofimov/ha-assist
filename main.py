@@ -4,6 +4,8 @@ import time
 from fastapi import FastAPI, HTTPException
 
 from api_models import (
+    AssistRequest,
+    AssistResponse,
     ChatCompletionChoice,
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -11,8 +13,8 @@ from api_models import (
     ChatCompletionUsage,
     ChatMessage,
 )
-from assistant_logic import build_assistant_response
-from ha_parser import parse_ha_objects
+from assistant_logic import build_action_text, build_assistant_response, build_service_items
+from ha_parser import HaObject, parse_ha_objects
 from text_normalizer import get_text_normalizer
 
 logging.basicConfig(level=logging.INFO)
@@ -92,4 +94,31 @@ async def create_chat_completion(
             completion_tokens=completion_tokens,
             total_tokens=prompt_tokens + completion_tokens,
         ),
+    )
+
+
+@app.post("/assist")
+async def process_assist_request(request: AssistRequest) -> AssistResponse:
+    logger.info("Incoming assist request: %s", request.model_dump_json())
+
+    normalized_request = get_text_normalizer().normalize(request.text)
+    ha_objects = [
+        HaObject(
+            entity_id=entity.entity_id,
+            name=entity.name,
+            state=entity.state,
+            aliases=entity.aliases,
+        )
+        for entity in request.entities
+    ]
+    service_calls = build_service_items(normalized_request, ha_objects)
+
+    if service_calls:
+        return AssistResponse(
+            response=build_action_text(normalized_request, service_calls),
+            service_calls=service_calls,
+        )
+
+    return AssistResponse(
+        response=normalized_request.normalized_text or normalized_request.original_text,
     )

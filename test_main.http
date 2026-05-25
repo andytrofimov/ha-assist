@@ -10,6 +10,25 @@ Accept: application/json
 
 ###
 
+POST http://127.0.0.1:8000/assist
+Content-Type: application/json
+
+{
+  "text": "Включи свет в спальне",
+  "language": "ru",
+  "conversation_id": null,
+  "entities": [
+    {
+      "entity_id": "light.yeelink_ceilc_75a1_light",
+      "name": "Люстра спальня",
+      "state": "off",
+      "aliases": "свет в спальне"
+    }
+  ]
+}
+
+###
+
 POST http://192.168.1.136:8000/v1/chat/completions
 Content-Type: application/json
 
