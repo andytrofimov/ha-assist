@@ -1,4 +1,5 @@
 import json
+import logging
 import random
 import re
 from dataclasses import dataclass
@@ -7,13 +8,18 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.ha_parser import HaObject
+from app.llm_client import ChatMessage, generate_llm_response
 from app.text_normalizer import NormalizedText, get_text_normalizer
 
+logger = logging.getLogger(__name__)
+
+# Короткие ответы для успешно распознанных команд умного дома.
 OK_RESPONSES = ("окей", "готово", "сделано")
 ERROR_NOT_SMART_HOME = "Не поняла, как это связано с умным домом."
 ERROR_ENTITY_NOT_FOUND = "Не нашла такое устройство."
 ERROR_ACTION_NOT_FOUND = "Не поняла, что сделать."
 
+# Домены, которые поддерживают стандартные Home Assistant команды turn_on/turn_off.
 TURNABLE_DOMAINS = {
     "automation",
     "climate",
@@ -31,6 +37,7 @@ TURNABLE_DOMAINS = {
 
 STATE_ONLY_DOMAINS = {"binary_sensor", "sensor"}
 
+# Слова, по которым пользовательская фраза связывается с доменами Home Assistant.
 DOMAIN_WORDS = {
     "light": {"свет", "лампа", "лампочка", "люстра", "подсветка", "торшер"},
     "climate": {"кондиционер", "кондей", "климат"},
@@ -51,6 +58,7 @@ DOMAIN_WORDS = {
     "binary_sensor": {"дверь", "окно", "датчик"},
 }
 
+# Общие слова не должны сами по себе повышать точность совпадения с entity.
 GENERIC_WORDS = {
     "в",
     "во",
@@ -86,6 +94,7 @@ GENERIC_WORDS = {
     "полчаса",
 }
 
+# Командные глаголы сравниваются после морфологической нормализации.
 TURN_ON_WORDS = {"включить", "активировать", "запустить"}
 TURN_OFF_WORDS = {"выключить", "отключить"}
 OPEN_WORDS = {"открыть"}
@@ -135,18 +144,23 @@ def build_assist_result(
         action = detect_action(command)
         timing = parse_timing(command.original_text)
         brightness_pct = parse_brightness_percent(command.original_text)
+        requested_domains = detect_requested_domains(command)
         matches = find_entity_matches(command, ha_objects)
 
         found_smart_home_signal = (
             found_smart_home_signal
             or action is not None
-            or is_state_query(command)
             or bool(matches)
-            or bool(detect_requested_domains(command))
+            or bool(requested_domains)
         )
 
         if is_state_query(command):
             if not matches:
+                if not found_smart_home_signal:
+                    return AssistLogicResult(
+                        response=ERROR_NOT_SMART_HOME,
+                        fallback_to_llm=True,
+                    )
                 return AssistLogicResult(response=ERROR_ENTITY_NOT_FOUND)
             state_answers.extend(build_state_answer(match.entity) for match in matches)
             continue
@@ -199,6 +213,30 @@ def build_assist_result(
     )
 
 
+async def build_assist_result_with_llm(
+    text: str,
+    ha_objects: list[HaObject],
+    llm_messages: list[ChatMessage] | None = None,
+) -> AssistLogicResult:
+    result = build_assist_result(text, ha_objects)
+    if not result.fallback_to_llm:
+        return result
+
+    messages = llm_messages or [
+        {
+            "role": "user",
+            "content": text,
+        },
+    ]
+    logger.info("LLM fallback requested for non-smart-home text: %s", text)
+    llm_response = await generate_llm_response(messages)
+    if llm_response is None:
+        logger.info("LLM fallback did not return a response")
+        return result
+
+    return AssistLogicResult(response=llm_response)
+
+
 def build_service_items(
     normalized_request: NormalizedText,
     ha_objects: list[HaObject],
@@ -230,6 +268,7 @@ def normalize(text: str) -> NormalizedText:
 
 
 def split_compound_commands(text: str) -> list[str]:
+    # Делим только там, где после союза явно начинается новая команда.
     parts = re.split(
         r"\s+и\s+(?=(?:включ|выключ|отключ|откро|закро|активир|запуст|постав|установ))",
         text,
@@ -254,6 +293,7 @@ def detect_action(command: NormalizedText) -> str | None:
 
 
 def is_state_query(command: NormalizedText) -> bool:
+    # Вопросы состояния не должны превращаться в сервисные вызовы.
     text = command.original_text.strip().lower()
     words = set(command.normal_forms)
 
@@ -280,6 +320,7 @@ def find_entity_matches(
 ) -> list[EntityMatch]:
     request_words = set(command.normal_forms)
     requested_domains = detect_requested_domains(command)
+    # Сначала ищем точные и частичные совпадения по имени и alias.
     scored_matches = [
         match
         for entity in ha_objects
@@ -295,6 +336,7 @@ def find_entity_matches(
 
     best_score = max(match.score for match in scored_matches)
     if best_score >= 100:
+        # При точном совпадении не подтягиваем похожие entity, кроме явных списков через "и".
         allow_related_matches = "и" in command.normal_forms
         exact_domains = {
             match.entity.entity_id.split(".", maxsplit=1)[0]
@@ -326,6 +368,7 @@ def score_entity_match(
     phrases = entity_phrases(entity)
 
     for phrase in phrases:
+        # Полная фраза из имени или alias сильнее отдельных слов.
         if phrase and phrase in command.normalized_text:
             return EntityMatch(entity=entity, score=100 + len(phrase.split()))
 
@@ -370,6 +413,7 @@ def broad_domain_matches(
     ha_objects: list[HaObject],
     requested_domains: set[str],
 ) -> list[EntityMatch]:
+    # Команды вида "включи свет" без комнаты применяются ко всем entity домена.
     if not requested_domains:
         return []
 
@@ -404,6 +448,7 @@ def detect_requested_domains(command: NormalizedText) -> set[str]:
 
 
 def entity_phrases(entity: HaObject) -> list[str]:
+    # Home Assistant иногда присылает служебные псевдонимы, их нельзя использовать для поиска.
     raw_phrases = [entity.name, *split_aliases(entity.aliases)]
     phrases: list[str] = []
     for phrase in raw_phrases:
@@ -453,6 +498,7 @@ def build_service_call(
     brightness_pct: int | None,
     delay_seconds: int | None,
 ) -> dict[str, Any] | None:
+    # Ответ сервиса остается простым JSON-планом, который выполняет интеграция HA.
     domain = entity.entity_id.split(".", maxsplit=1)[0]
     service = service_for_action(domain, action)
     if service is None:
@@ -478,6 +524,7 @@ def build_reverse_service_call(
     action: str,
     delay_seconds: int | None,
 ) -> dict[str, Any] | None:
+    # Временные команды добавляют обратное действие после указанной длительности.
     if delay_seconds is None:
         return None
 
@@ -513,6 +560,7 @@ def service_for_action(domain: str, action: str) -> str | None:
 
 
 def parse_brightness_percent(text: str) -> int | None:
+    # Яркость ограничиваем диапазоном, который принимает Home Assistant.
     match = re.search(r"\b(?:на\s+)?(\d{1,3})\s*%|\bна\s+(\d{1,3})\s+процент", text, re.I)
     if match is None:
         return None
@@ -522,6 +570,7 @@ def parse_brightness_percent(text: str) -> int | None:
 
 
 def parse_timing(text: str) -> ParsedTiming:
+    # "через" означает задержку, а "на 15 минут" означает временное действие.
     delay_seconds = parse_seconds_after_marker(text, "через")
     duration_seconds = parse_duration_seconds(text)
     return ParsedTiming(delay_seconds=delay_seconds, duration_seconds=duration_seconds)
@@ -562,6 +611,7 @@ def duration_to_seconds(amount_text: str | None, unit: str) -> int:
 
 
 def build_state_answer(entity: HaObject) -> str:
+    # Состояния Home Assistant переводим в короткий русский ответ для Assist.
     domain = entity.entity_id.split(".", maxsplit=1)[0]
     name = entity.name
     state = entity.state

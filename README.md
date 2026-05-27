@@ -10,6 +10,16 @@ Run the FastAPI service from the repository root:
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
+Optional DeepSeek fallback for non-smart-home requests.
+Put the API key into `deepseek_api_key.txt` in the repository root:
+
+```powershell
+Set-Content -Encoding UTF8 deepseek_api_key.txt "..."
+```
+
+The fallback sends the recent conversation history for the same `conversation_id`,
+so follow-up questions keep context while the service process is running.
+
 ## HACS installation
 
 1. Add this repository to HACS as a custom repository.

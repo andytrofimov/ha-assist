@@ -1,6 +1,8 @@
+import asyncio
+
 import pytest
 
-from app.assistant_logic import build_assist_result
+from app.assistant_logic import build_assist_result, build_assist_result_with_llm
 from app.ha_parser import HaObject
 
 
@@ -118,8 +120,8 @@ def test_compound_command_with_brightness_duration_and_cover(
     entities: list[HaObject],
 ) -> None:
     result = build_assist_result(
-        "включи свет в гостиной на 15 процентов на 15 минут "
-        "и закрой штору в спальне",
+        """включи свет в гостиной на 15 процентов на 15 минут
+и закрой штору в спальне""",
         entities,
     )
 
@@ -199,4 +201,49 @@ def test_non_smart_home_request_falls_back_to_llm(entities: list[HaObject]) -> N
     result = build_assist_result("расскажи анекдот", entities)
 
     assert result.fallback_to_llm
+    assert result.service_calls == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "сколько лет прожил птр первый",
+        "как звали ивана грозного",
+    ],
+)
+def test_non_smart_home_question_falls_back_to_llm(
+    entities: list[HaObject],
+    text: str,
+) -> None:
+    result = build_assist_result(text, entities)
+
+    assert result.fallback_to_llm
+    assert result.service_calls == []
+    assert result.response == "Не поняла, как это связано с умным домом."
+
+
+def test_non_smart_home_request_uses_llm_response(
+    entities: list[HaObject],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_generate_llm_response(messages: list[dict[str, str]]) -> str:
+        assert messages == [
+            {
+                "role": "user",
+                "content": "расскажи анекдот",
+            },
+        ]
+        return "Короткий ответ от ИИ."
+
+    monkeypatch.setattr(
+        "app.assistant_logic.generate_llm_response",
+        fake_generate_llm_response,
+    )
+
+    result = asyncio.run(
+        build_assist_result_with_llm("расскажи анекдот", entities),
+    )
+
+    assert result.response == "Короткий ответ от ИИ."
+    assert not result.fallback_to_llm
     assert result.service_calls == []

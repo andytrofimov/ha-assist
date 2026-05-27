@@ -3,7 +3,8 @@ import logging
 from fastapi import FastAPI
 
 from app.api_models import AssistRequest, AssistResponse
-from app.assistant_logic import build_assist_result
+from app.assistant_logic import build_assist_result_with_llm
+from app.conversation_memory import build_llm_messages, remember_exchange
 from app.ha_parser import HaObject
 
 logging.basicConfig(level=logging.INFO)
@@ -30,10 +31,19 @@ async def process_assist_request(request: AssistRequest) -> AssistResponse:
         )
         for entity in request.entities
     ]
-    result = build_assist_result(request.text, ha_objects)
+    result = await build_assist_result_with_llm(
+        text=request.text,
+        ha_objects=ha_objects,
+        llm_messages=build_llm_messages(request.conversation_id, request.text),
+    )
     response = AssistResponse(
         response=result.response,
         service_calls=result.service_calls,
+    )
+    remember_exchange(
+        conversation_id=request.conversation_id,
+        user_text=request.text,
+        assistant_text=response.response,
     )
     logger.info(
         "Assist response: %s; service_calls=%s",

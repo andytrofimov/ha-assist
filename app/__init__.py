@@ -1,1 +1,1 @@
-"""FastAPI service package for HA Assist."""
+# Пакет FastAPI-сервиса HA Assist.
