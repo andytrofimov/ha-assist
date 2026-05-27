@@ -1,7 +1,7 @@
 import pytest
 
-from assistant_logic import build_assist_result
-from ha_parser import HaObject
+from app.assistant_logic import build_assist_result
+from app.ha_parser import HaObject
 
 
 def entity(

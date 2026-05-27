@@ -2,9 +2,9 @@ import logging
 
 from fastapi import FastAPI
 
-from api_models import AssistRequest, AssistResponse
-from assistant_logic import build_assist_result
-from ha_parser import HaObject
+from app.api_models import AssistRequest, AssistResponse
+from app.assistant_logic import build_assist_result
+from app.ha_parser import HaObject
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

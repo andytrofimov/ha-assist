@@ -6,8 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ha_parser import HaObject
-from text_normalizer import NormalizedText, get_text_normalizer
+from app.ha_parser import HaObject
+from app.text_normalizer import NormalizedText, get_text_normalizer
 
 OK_RESPONSES = ("окей", "готово", "сделано")
 ERROR_NOT_SMART_HOME = "Не поняла, как это связано с умным домом."

@@ -7,10 +7,10 @@ from typing import Any, Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict
 
-from assistant_logic import build_action_text, build_service_items
-from ha_parser import HaObject
-from ha_service_call_builder import build_execute_services_tool_call
-from text_normalizer import NormalizedText, get_text_normalizer
+from app.assistant_logic import build_action_text, build_service_items
+from app.ha_parser import HaObject
+from app.ha_service_call_builder import build_execute_services_tool_call
+from app.text_normalizer import NormalizedText, get_text_normalizer
 
 
 class ChatMessage(BaseModel):
