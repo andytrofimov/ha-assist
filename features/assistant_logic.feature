@@ -13,7 +13,7 @@
       | light.svet_kabinet                    | Свет кабинет     | on     |             | kabinet   | Кабинет   | tretii   | Третий     |
       | cover.0x54ef441000c8399e              | Штора спальня    | open   |             | spalnia   | Спальня   | vtoroi   | Второй     |
       | cover.kontroller_vorot                | Ворота           | closed |             | ulitsa    | Улица     | ulitsa   | Улица      |
-      | scene.rezhim_kino                     | Режим кино       | off    |             | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | scene.kino                | Сцена кино     | off    |             | gostinaia | Гостиная  | vtoroi   | Второй     |
       | switch.krovat_massazh                 | Массаж           | off    |             | spalnia   | Спальня   | vtoroi   | Второй     |
       | climate.air_conditioner_1             | Кондей спальня   | off    | кондиционер | spalnia   | Спальня   | vtoroi   | Второй     |
     И доступны комнаты:
@@ -27,13 +27,13 @@
       | vtoroi   | Второй |         | 2     |
       | tretii   | Третий |         | 3     |
 
-  Сценарий: Включить сцену по названию
-    Когда пользователь говорит "режим кино"
+  Сценарий: Выполнить сцену по совпадению имени
+    Когда пользователь говорит "сцена кино"
     Тогда ассистент вызывает сервисы:
-      | domain | service | entity_id         |
-      | scene  | turn_on | scene.rezhim_kino |
+      | domain | service | entity_id  |
+      | scene  | turn_on | scene.kino |
 
-  Сценарий: Включить выключатель по названию
+  Сценарий: Включить выключатель по совпадению имени
     Когда пользователь говорит "массаж"
     Тогда ассистент вызывает сервисы:
       | domain | service | entity_id             |
@@ -45,13 +45,13 @@
       | domain | service    | entity_id                |
       | cover  | open_cover | cover.0x54ef441000c8399e |
 
-  Сценарий: Закрытие ворот
+  Сценарий: Закрыть cover-объект
     Когда пользователь говорит "закрой ворота"
     Тогда ассистент вызывает сервисы:
       | domain | service     | entity_id              |
       | cover  | close_cover | cover.kontroller_vorot |
 
-  Сценарий: Включить кондиционер в спальне
+  Сценарий: Включить климатическое устройство в указанной комнате
     Когда пользователь говорит "включи кондиционер в спальне"
     Тогда ассистент вызывает сервисы:
       | domain  | service | entity_id                 |
@@ -76,7 +76,7 @@
       | light  | turn_off    | light.svet_gostinnaia    |                | 900           |
       | cover  | close_cover | cover.0x54ef441000c8399e |                |               |
 
-  Сценарий: Включить кондиционер на полчаса
+  Сценарий: Включить климатическое устройство на длительность
     Когда пользователь говорит "включи кондиционер в спальне на полчаса"
     Тогда ассистент вызывает сервисы:
       | domain  | service  | entity_id                 | delay_seconds |

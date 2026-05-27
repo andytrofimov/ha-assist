@@ -13,7 +13,7 @@
       | light.svet_kukhnia                 | Свет кухня          | off   |         | kukhnia   | Кухня     | vtoroi   | Второй     |
       | switch.chainik                     | Чайник              | off   |         | kukhnia   | Кухня     | vtoroi   | Второй     |
       | light.svet_kabinet                 | Свет кабинет        | on    |         | kabinet   | Кабинет   | tretii   | Третий     |
-      | scene.rezhim_kino                  | Режим кино          | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | scene.kino                             | Сцена кино      | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
       | light.yeelink_ceil43_9a4b_light    | Люстра гостиная     | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
       | light.yeelink_ceilc_a6e6_ambient_light | Подсветка кухня | off   |         | kukhnia   | Кухня     | vtoroi   | Второй     |
     И доступны комнаты:

@@ -16,15 +16,16 @@ from app.number_parser import (
     parse_temperature,
 )
 from app.text_normalizer import NormalizedText, get_text_normalizer
+from app.text_normalizer import agree_adjective
 
 logger = logging.getLogger(__name__)
 
 # Короткие ответы для успешно распознанных команд умного дома.
 OK_RESPONSES = ("окей", "готово", "сделано")
-ERROR_ENTITY_NOT_FOUND = "Не нашла такое устройство."
-ERROR_ACTION_NOT_FOUND = "Не поняла, что сделать."
-ERROR_AREA_NOT_FOUND = "Не нашла такую комнату."
-ERROR_AMBIGUOUS_AREA = "Уточните комнату."
+ERROR_ENTITY_NOT_FOUND = "Не нашла такое устройство"
+ERROR_ACTION_NOT_FOUND = "Не поняла, что сделать"
+ERROR_AREA_NOT_FOUND = "Не нашла такую комнату"
+ERROR_AMBIGUOUS_AREA = "Уточните комнату"
 
 # Домены, которые поддерживают стандартные Home Assistant команды turn_on/turn_off.
 TURNABLE_DOMAINS = {
@@ -60,8 +61,8 @@ DOMAIN_WORDS = {
     },
     "cover": {"штора", "шторы", "занавеска", "ворота", "рольставни"},
     "switch": {"выключатель", "розетка", "массаж", "чайник", "комп", "компьютер"},
-    "input_boolean": {"режим"},
-    "scene": {"режим", "сцена"},
+    "input_boolean": set(),
+    "scene": {"сцена"},
     "media_player": {"телевизор", "телек", "тв", "колонка", "плеер"},
     "sensor": {
         "температура",
@@ -314,7 +315,7 @@ async def build_assist_result_with_llm(
         logger.info("LLM fallback did not return a response")
         return result
 
-    return AssistLogicResult(response=llm_response)
+    return AssistLogicResult(response=strip_trailing_period(llm_response))
 
 
 def build_service_items(
@@ -345,6 +346,10 @@ def build_action_text(
 
 def normalize(text: str) -> NormalizedText:
     return get_text_normalizer().normalize(text)
+
+
+def strip_trailing_period(text: str) -> str:
+    return text.rstrip().removesuffix(".").rstrip()
 
 
 def normalized_words(text: NormalizedText) -> set[str]:
@@ -428,7 +433,7 @@ def is_state_query(command: NormalizedText) -> bool:
         return True
     return bool(
         re.search(
-            r"\b(включ[её]н|включена|открыт|открыта|закрыт|закрыта)\b",
+            r"\b(включ[её]н|включена|выключ[её]н|выключена|открыт|открыта|закрыт|закрыта)\b",
             text,
             flags=re.IGNORECASE,
         )
@@ -1039,30 +1044,74 @@ def parse_timing(text: str) -> ParsedTiming:
 def build_state_answer(entity: HaObject, command: NormalizedText | None = None) -> str:
     # Состояния Home Assistant переводим в короткий русский ответ для Assist.
     domain = entity.entity_id.split(".", maxsplit=1)[0]
-    name = entity.name
     state = entity.state
     words = normalized_words(command) if command is not None else set()
 
     if domain == "binary_sensor":
         is_open = state == "on"
         if words & {"закрыть", "закрытый"}:
-            return "нет, открыто" if is_open else "да"
+            return yes_no_state_answer(not is_open, entity.name, is_open)
         if words & {"открыть", "открытый"}:
-            return "да" if is_open else "нет, закрыто"
-        return "открыто" if is_open else "закрыто"
+            return yes_no_state_answer(is_open, entity.name, is_open)
+        return named_open_closed_state(entity.name, is_open)
 
     if state in {"on", "off"}:
         is_on = state == "on"
         if words & {"включить", "включенный"}:
-            return "да" if is_on else "нет"
+            return yes_no_power_state_answer(is_on, entity.name, is_on)
         if words & {"выключить", "выключенный"}:
-            return "да" if not is_on else "нет"
-        return "включено" if is_on else "выключено"
+            return yes_no_power_state_answer(not is_on, entity.name, is_on)
+        return named_power_state(entity.name, is_on)
 
     if state in {"open", "closed"}:
-        return "открыто" if state == "open" else "закрыто"
+        is_open = state == "open"
+        if words & {"закрыть", "закрытый"}:
+            return yes_no_state_answer(not is_open, entity.name, is_open)
+        if words & {"открыть", "открытый"}:
+            return yes_no_state_answer(is_open, entity.name, is_open)
+        return named_open_closed_state(entity.name, is_open)
 
     if domain == "sensor" and entity.unit_of_measurement == "%":
         return f"{state}%"
 
     return state
+
+
+def yes_no_state_answer(
+        is_expected_state: bool,
+        entity_name: str,
+        actual_is_open: bool,
+) -> str:
+    return f"{'да' if is_expected_state else 'нет'}, {open_closed_adjective(entity_name, actual_is_open)}"
+
+
+def yes_no_power_state_answer(
+        is_expected_state: bool,
+        entity_name: str,
+        actual_is_on: bool,
+) -> str:
+    return f"{'да' if is_expected_state else 'нет'}, {power_adjective(entity_name, actual_is_on)}"
+
+
+def named_power_state(entity_name: str, is_on: bool) -> str:
+    features = get_text_normalizer().first_word_agreement(entity_name)
+    return f"{features.word} {power_adjective(entity_name, is_on)}"
+
+
+def power_adjective(entity_name: str, is_on: bool) -> str:
+    features = get_text_normalizer().first_word_agreement(entity_name)
+    if is_on:
+        return agree_adjective(features, "включен", "включена", "включено", "включены")
+    return agree_adjective(features, "выключен", "выключена", "выключено", "выключены")
+
+
+def named_open_closed_state(entity_name: str, is_open: bool) -> str:
+    features = get_text_normalizer().first_word_agreement(entity_name)
+    return f"{features.word} {open_closed_adjective(entity_name, is_open)}"
+
+
+def open_closed_adjective(entity_name: str, is_open: bool) -> str:
+    features = get_text_normalizer().first_word_agreement(entity_name)
+    if is_open:
+        return agree_adjective(features, "открыт", "открыта", "открыто", "открыты")
+    return agree_adjective(features, "закрыт", "закрыта", "закрыто", "закрыты")
