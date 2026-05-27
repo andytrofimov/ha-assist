@@ -25,6 +25,7 @@ OK_RESPONSES = ("окей", "готово", "сделано")
 ERROR_ENTITY_NOT_FOUND = "Не нашла такое устройство"
 ERROR_ACTION_NOT_FOUND = "Не поняла, что сделать"
 ERROR_AREA_NOT_FOUND = "Не нашла такую комнату"
+ERROR_FLOOR_NOT_FOUND = "Не нашла такой этаж"
 ERROR_AMBIGUOUS_AREA = "Уточните комнату"
 
 # Домены, которые поддерживают стандартные Home Assistant команды turn_on/turn_off.
@@ -225,6 +226,9 @@ def build_assist_result(
             state_answers.extend(build_state_answer(match.entity, command) for match in matches)
             continue
 
+        if action is None and is_general_question(command):
+            return llm_fallback_result()
+
         if action is None and matches:
             action = "turn_on" if all(is_turnable(match.entity) for match in matches) else None
 
@@ -234,11 +238,15 @@ def build_assist_result(
             return llm_fallback_result()
 
         if not matches:
+            if has_unknown_floor(command, ha_objects, floors or []):
+                return AssistLogicResult(response=ERROR_FLOOR_NOT_FOUND)
             if has_unknown_location(command, ha_objects, areas or [], floors or []):
                 return AssistLogicResult(response=ERROR_AREA_NOT_FOUND)
             return AssistLogicResult(response=ERROR_ENTITY_NOT_FOUND)
 
         if is_ambiguous_location(matches, location_context):
+            if has_unknown_floor(command, ha_objects, floors or []):
+                return AssistLogicResult(response=ERROR_FLOOR_NOT_FOUND)
             if has_unknown_location(command, ha_objects, areas or [], floors or []):
                 return AssistLogicResult(response=ERROR_AREA_NOT_FOUND)
             return AssistLogicResult(response=ERROR_AMBIGUOUS_AREA)
@@ -437,6 +445,13 @@ def is_state_query(command: NormalizedText) -> bool:
             text,
             flags=re.IGNORECASE,
         )
+    )
+
+
+def is_general_question(command: NormalizedText) -> bool:
+    return bool(
+        set(command.normal_forms)
+        & {"почему", "зачем", "кто", "когда", "где", "как", "каков", "какова"}
     )
 
 
@@ -716,6 +731,34 @@ def has_unknown_location(
     return bool(non_generic_words - domain_words - known_location_words)
 
 
+def has_unknown_floor(
+        command: NormalizedText,
+        ha_objects: list[HaObject],
+        floors: list[Any],
+) -> bool:
+    request_words = normalized_words(command)
+    if "этаж" not in request_words:
+        return False
+
+    context = detect_location_context(
+        command=command,
+        ha_objects=ha_objects,
+        areas=[],
+        floors=floors,
+        source_area_id=None,
+        source_area_name=None,
+        source_floor_id=None,
+        source_floor_name=None,
+    )
+    if context.explicit_floor:
+        return False
+
+    known_floor_words = floor_words(floors) | entity_floor_words(ha_objects)
+    non_generic_words = request_words - expanded_words(GENERIC_WORDS)
+    domain_words = expanded_words(set().union(*DOMAIN_WORDS.values()))
+    return bool(non_generic_words - domain_words - known_floor_words)
+
+
 def is_ambiguous_location(
     matches: list[EntityMatch],
     location_context: LocationContext,
@@ -753,6 +796,25 @@ def all_location_words(areas: list[Any], floors: list[Any]) -> set[str]:
         for phrase in location_entry_phrases(entry):
             words.update(normalized_words(normalize(phrase)))
             words.update(raw_word_variants(phrase))
+    return words
+
+
+def floor_words(floors: list[Any]) -> set[str]:
+    words: set[str] = set()
+    for floor in floors:
+        for phrase in location_entry_phrases(floor):
+            words.update(normalized_words(normalize(phrase)))
+            words.update(raw_word_variants(phrase))
+    return words
+
+
+def entity_floor_words(ha_objects: list[HaObject]) -> set[str]:
+    words: set[str] = set()
+    for entity in ha_objects:
+        for value in (entity.floor_name, entity.floor_id):
+            if value:
+                words.update(normalized_words(normalize(value)))
+                words.update(raw_word_variants(value))
     return words
 
 
