@@ -18,9 +18,12 @@ def test_assist_request_accepts_areas_and_floors() -> None:
                     "unit_of_measurement": "%",
                     "device_class": "thermostat",
                     "hvac_modes": ["heat", "off"],
-                    "temperature": 23.1,
-                    "humidity": 50,
-                    "wind_speed": 4.2,
+                    "attributes": {
+                        "temperature": 23.1,
+                        "humidity": 50,
+                        "wind_speed": 4.2,
+                        "forecast": [{"condition": "rainy"}],
+                    },
                 },
             ],
             "areas": [
@@ -46,8 +49,9 @@ def test_assist_request_accepts_areas_and_floors() -> None:
     assert request.entities[0].unit_of_measurement == "%"
     assert request.entities[0].device_class == "thermostat"
     assert request.entities[0].hvac_modes == ["heat", "off"]
-    assert request.entities[0].temperature == 23.1
-    assert request.entities[0].humidity == 50
-    assert request.entities[0].wind_speed == 4.2
+    assert request.entities[0].attributes["temperature"] == 23.1
+    assert request.entities[0].attributes["humidity"] == 50
+    assert request.entities[0].attributes["wind_speed"] == 4.2
+    assert request.entities[0].attributes["forecast"] == [{"condition": "rainy"}]
     assert request.areas[0].name == "Кухня"
     assert request.floors[0].floor_id == "floor_1"

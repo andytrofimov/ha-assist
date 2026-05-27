@@ -32,8 +32,19 @@ def entities_from_table(table: Any) -> list[HaObject]:
         "unit_of_measurement",
         "device_class",
         "hvac_modes",
+        "attributes",
     }
     for row in table:
+        attributes: dict[str, Any] = {}
+        for heading in table.headings:
+            value = row_value(row, heading)
+            if not value:
+                continue
+            if heading.startswith("attributes."):
+                attributes[heading.removeprefix("attributes.")] = value
+            elif heading not in known_columns:
+                attributes[heading] = value
+
         entity_data: dict[str, Any] = {
             "entity_id": row_value(row, "entity_id"),
             "name": row_value(row, "name"),
@@ -46,14 +57,8 @@ def entities_from_table(table: Any) -> list[HaObject]:
             "unit_of_measurement": row_value(row, "unit_of_measurement") or None,
             "device_class": row_value(row, "device_class") or None,
             "hvac_modes": split_cell(row_value(row, "hvac_modes")),
+            "attributes": attributes,
         }
-        entity_data.update(
-            {
-                heading: row_value(row, heading)
-                for heading in table.headings
-                if heading not in known_columns and row_value(row, heading)
-            },
-        )
         entities.append(HaObject(**entity_data))
     return entities
 

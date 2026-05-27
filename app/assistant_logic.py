@@ -44,7 +44,7 @@ TURNABLE_DOMAINS = {
     "vacuum",
 }
 
-STATE_ONLY_DOMAINS = {"binary_sensor", "sensor", "weather"}
+STATE_ONLY_DOMAINS = {"binary_sensor", "sensor", "todo", "weather"}
 DEVICE_WORDS = {"устройство", "устройства", "прибор", "приборы"}
 ALL_WORDS = {"весь", "все", "всё", "вся", "всей", "всю"}
 
@@ -66,6 +66,7 @@ DOMAIN_WORDS = {
     "scene": {"сцена"},
     "media_player": {"телевизор", "телек", "тв", "колонка", "плеер"},
     "weather": {"погода", "прогноз"},
+    "todo": {"список", "дело", "дела", "задача", "задачи", "покупка", "покупки", "покупок"},
     "sensor": {
         "температура",
         "влажность",
@@ -95,6 +96,7 @@ GENERIC_WORDS = {
     "какое",
     "какие",
     "сколько",
+    "сейчас",
     "процент",
     "процентов",
     "включить",
@@ -231,6 +233,9 @@ def build_assist_result(
             return llm_fallback_result()
 
         if action is None and matches:
+            if all(entity_domain(match.entity) in STATE_ONLY_DOMAINS for match in matches):
+                state_answers.extend(build_state_answer(match.entity, command) for match in matches)
+                continue
             if all(entity_domain(match.entity) == "button" for match in matches):
                 action = "press"
             else:
@@ -835,7 +840,10 @@ def score_entity_match(
 
     for phrase in phrases:
         # Полная фраза из имени или alias сильнее отдельных слов.
-        if phrase and phrase in command.normalized_text:
+        if contains_phrase(command.normalized_text, phrase):
+            return EntityMatch(entity=entity, score=100 + len(phrase.split()))
+    for phrase in raw_entity_phrases(entity):
+        if contains_phrase(command.original_text.lower(), phrase):
             return EntityMatch(entity=entity, score=100 + len(phrase.split()))
 
     if requested_domains and entity_domain not in requested_domains:
@@ -981,6 +989,20 @@ def entity_phrases(entity: HaObject) -> list[str]:
         if normalized and not normalized.startswith("computednametype"):
             phrases.append(normalized)
     return phrases
+
+
+def contains_phrase(text: str, phrase: str) -> bool:
+    if not phrase:
+        return False
+    return bool(re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text))
+
+
+def raw_entity_phrases(entity: HaObject) -> list[str]:
+    return [
+        phrase.strip().lower()
+        for phrase in [entity.name, *split_aliases(entity.aliases)]
+        if phrase.strip() and not phrase.strip().startswith("ComputedNameType.")
+    ]
 
 
 def split_aliases(aliases: str) -> list[str]:
@@ -1147,7 +1169,7 @@ def build_state_answer(entity: HaObject, command: NormalizedText | None = None) 
         return named_open_closed_state(entity.name, is_open)
 
     if domain == "sensor" and entity.unit_of_measurement == "%":
-        return f"{state}%"
+        return format_percent_state(state)
 
     if domain == "sensor" and is_temperature_unit(entity.unit_of_measurement):
         return format_temperature_state(state)
@@ -1179,7 +1201,7 @@ WEATHER_STATE_WORDS = {
 
 def build_weather_answer(entity: HaObject) -> str:
     parts = [WEATHER_STATE_WORDS.get(entity.state, entity.state)]
-    temperature = format_temperature_value(entity.temperature)
+    temperature = format_temperature_value((entity.attributes or {}).get("temperature"))
     if temperature:
         parts.append(temperature)
     return ", ".join(parts)
@@ -1192,7 +1214,7 @@ def format_temperature_value(value: str | int | float | None) -> str:
     if parsed_value is None:
         return ""
     temperature = round_half_up(parsed_value)
-    return f"{temperature} {degree_word(temperature)}"
+    return temperature_text(temperature)
 
 
 def is_temperature_unit(unit: str | None) -> bool:
@@ -1204,7 +1226,21 @@ def format_temperature_state(state: str) -> str:
     if value is None:
         return state
     temperature = round_half_up(value)
-    return f"{temperature} {degree_word(temperature)}"
+    return temperature_text(temperature)
+
+
+def format_percent_state(state: str) -> str:
+    value = parse_float(state)
+    if value is None:
+        return state
+    percent = round_half_up(value)
+    return f"{percent} {percent_word(percent)}"
+
+
+def temperature_text(value: int) -> str:
+    if value < 0:
+        return f"минус {abs(value)} {degree_word(value)}"
+    return f"{value} {degree_word(value)}"
 
 
 def parse_float(value: str) -> float | None:
@@ -1229,6 +1265,17 @@ def degree_word(value: int) -> str:
     if 2 <= value % 10 <= 4:
         return "градуса"
     return "градусов"
+
+
+def percent_word(value: int) -> str:
+    value = abs(value)
+    if 11 <= value % 100 <= 14:
+        return "процентов"
+    if value % 10 == 1:
+        return "процент"
+    if 2 <= value % 10 <= 4:
+        return "процента"
+    return "процентов"
 
 
 def yes_no_state_answer(

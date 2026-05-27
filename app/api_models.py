@@ -17,9 +17,7 @@ class AssistEntity(BaseModel):
     unit_of_measurement: str | None = None
     device_class: str | None = None
     hvac_modes: list[str] | None = None
-    temperature: str | int | float | None = None
-    humidity: str | int | float | None = None
-    wind_speed: str | int | float | None = None
+    attributes: dict[str, Any] | None = None
 
 
 class AssistArea(BaseModel):
