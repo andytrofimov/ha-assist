@@ -153,7 +153,10 @@ def step_then_service_calls(context: Any) -> None:
                 service_call["delay_seconds"] = delay_seconds
         expected.append(service_call)
 
-    assert context.result.service_calls == expected
+    assert context.result.service_calls == expected, (
+        context.result.response,
+        context.result.service_calls,
+    )
 
 
 @step("ассистент не вызывает сервисы")
@@ -173,7 +176,7 @@ def step_then_response_not_contains(context: Any, text: str) -> None:
 
 @step('ответ ассистента равен "{text}"')
 def step_then_response_equals(context: Any, text: str) -> None:
-    assert context.result.response == text
+    assert context.result.response == text, context.result.response
 
 
 @step("ассистент просит LLM fallback")

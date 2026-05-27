@@ -82,9 +82,13 @@ GENERIC_WORDS = {
     "процент",
     "процентов",
     "включить",
+    "включи",
     "выключить",
+    "выключи",
     "открыть",
+    "открой",
     "закрыть",
+    "закрой",
     "активировать",
     "запустить",
     "поставить",
@@ -96,6 +100,7 @@ GENERIC_WORDS = {
     "час",
     "часа",
     "полчаса",
+    "этаж",
 }
 
 # Командные глаголы сравниваются после морфологической нормализации.
@@ -205,7 +210,7 @@ def build_assist_result(
                         fallback_to_llm=True,
                     )
                 return AssistLogicResult(response=ERROR_ENTITY_NOT_FOUND)
-            state_answers.extend(build_state_answer(match.entity) for match in matches)
+            state_answers.extend(build_state_answer(match.entity, command) for match in matches)
             continue
 
         if action is None and matches:
@@ -220,11 +225,13 @@ def build_assist_result(
             )
 
         if not matches:
-            if has_unknown_location(command, areas or [], floors or []):
+            if has_unknown_location(command, ha_objects, areas or [], floors or []):
                 return AssistLogicResult(response=ERROR_AREA_NOT_FOUND)
             return AssistLogicResult(response=ERROR_ENTITY_NOT_FOUND)
 
         if is_ambiguous_location(matches, location_context):
+            if has_unknown_location(command, ha_objects, areas or [], floors or []):
+                return AssistLogicResult(response=ERROR_AREA_NOT_FOUND)
             return AssistLogicResult(response=ERROR_AMBIGUOUS_AREA)
 
         for match in matches:
@@ -330,6 +337,45 @@ def normalize(text: str) -> NormalizedText:
     return get_text_normalizer().normalize(text)
 
 
+def normalized_words(text: NormalizedText) -> set[str]:
+    words = set(text.normal_forms) | set(text.tokens)
+    expanded: set[str] = set()
+    for word in words:
+        if word and not word.isdigit():
+            expanded.update(word_variants(word))
+    return expanded
+
+
+def raw_words(text: str) -> set[str]:
+    return set(re.findall(r"[A-Za-zА-Яа-яЁё]+", text.lower()))
+
+
+def raw_word_variants(text: str) -> set[str]:
+    return expanded_words(raw_words(text))
+
+
+def word_variants(word: str) -> set[str]:
+    variants = {word}
+    if word.endswith("ая") and len(word) > 3:
+        variants.add(f"{word[:-2]}ый")
+        variants.add(f"{word[:-2]}ой")
+    if word.endswith("яя") and len(word) > 3:
+        variants.add(f"{word[:-2]}ий")
+        variants.add(f"{word[:-2]}ей")
+    if word.endswith(("а", "я")) and len(word) > 3:
+        variants.add(f"{word[:-1]}е")
+    if word[-1:] not in {"а", "е", "ё", "и", "й", "о", "у", "ы", "ь", "э", "ю", "я"}:
+        variants.add(f"{word}е")
+    return variants
+
+
+def expanded_words(words: set[str]) -> set[str]:
+    expanded: set[str] = set()
+    for word in words:
+        expanded.update(word_variants(word))
+    return expanded
+
+
 def split_compound_commands(text: str) -> list[str]:
     # Делим только там, где после союза явно начинается новая команда.
     parts = re.split(
@@ -382,7 +428,7 @@ def find_entity_matches(
     ha_objects: list[HaObject],
     location_context: LocationContext | None = None,
 ) -> list[EntityMatch]:
-    request_words = {word for word in command.normal_forms if not word.isdigit()}
+    request_words = normalized_words(command)
     requested_domains = detect_requested_domains(command)
     search_objects = filter_entities_by_location(ha_objects, location_context)
     # Сначала ищем точные и частичные совпадения по имени и alias.
@@ -439,6 +485,14 @@ def find_entity_matches(
             )
         ]
 
+    if "и" in command.tokens and requested_domains:
+        return [
+            match
+            for match in scored_matches
+            if match.score >= 50
+            and match.entity.entity_id.split(".", maxsplit=1)[0] in requested_domains
+        ]
+
     return [match for match in scored_matches if match.score == best_score]
 
 
@@ -454,6 +508,10 @@ def detect_location_context(
 ) -> LocationContext:
     area_ids = matched_location_ids(command, areas, "area_id")
     floor_ids = matched_location_ids(command, floors, "floor_id")
+    if not area_ids:
+        area_ids = matched_location_ids(command, entity_area_entries(ha_objects), "area_id")
+    if not floor_ids:
+        floor_ids = matched_location_ids(command, entity_floor_entries(ha_objects), "floor_id")
 
     explicit_area = bool(area_ids)
     explicit_floor = bool(floor_ids)
@@ -506,14 +564,21 @@ def matched_location_ids(
     id_field: str,
 ) -> set[str]:
     matches: set[str] = set()
-    request_words = {word for word in command.normal_forms if not word.isdigit()}
+    request_words = normalized_words(command)
     for entry in entries:
         entry_id = get_value(entry, id_field)
         if not entry_id:
             continue
         for phrase in location_entry_phrases(entry):
             normalized = normalize(phrase)
-            words = set(normalized.normal_forms) - GENERIC_WORDS
+            words = normalized_words(normalized) - expanded_words(GENERIC_WORDS)
+            if (
+                id_field == "floor_id"
+                and "этаж" not in request_words
+                and "этаж" not in words
+                and normalized.normalized_text != str(entry_id).lower()
+            ):
+                continue
             if normalized.normalized_text in command.normalized_text or (
                 words and words <= request_words
             ):
@@ -528,8 +593,35 @@ def location_entry_phrases(entry: Any) -> list[str]:
         for key in ("name", "area_id", "floor_id")
         if (value := get_value(entry, key))
     ]
+    if get_value(entry, "area_id") is None and (name := get_value(entry, "name")):
+        phrases.append(f"{name} этаж")
     phrases.extend(split_aliases(str(get_value(entry, "aliases") or "")))
     return [phrase for phrase in phrases if phrase.strip()]
+
+
+def entity_area_entries(ha_objects: list[HaObject]) -> list[dict[str, str]]:
+    entries: dict[str, dict[str, str]] = {}
+    for entity in ha_objects:
+        if entity.area_id and entity.area_id not in entries:
+            entries[entity.area_id] = {
+                "area_id": entity.area_id,
+                "name": entity.area_name or entity.area_id,
+                "floor_id": entity.floor_id or "",
+                "aliases": "",
+            }
+    return list(entries.values())
+
+
+def entity_floor_entries(ha_objects: list[HaObject]) -> list[dict[str, str]]:
+    entries: dict[str, dict[str, str]] = {}
+    for entity in ha_objects:
+        if entity.floor_id and entity.floor_id not in entries:
+            entries[entity.floor_id] = {
+                "floor_id": entity.floor_id,
+                "name": entity.floor_name or entity.floor_id,
+                "aliases": "",
+            }
+    return list(entries.values())
 
 
 def id_by_name(name: str | None, entries: list[Any], id_field: str) -> str | None:
@@ -582,6 +674,7 @@ def entity_in_location(entity: HaObject, location_context: LocationContext) -> b
 
 def has_unknown_location(
     command: NormalizedText,
+    ha_objects: list[HaObject],
     areas: list[Any],
     floors: list[Any],
 ) -> bool:
@@ -589,7 +682,7 @@ def has_unknown_location(
         return False
     context = detect_location_context(
         command=command,
-        ha_objects=[],
+        ha_objects=ha_objects,
         areas=areas,
         floors=floors,
         source_area_id=None,
@@ -599,10 +692,10 @@ def has_unknown_location(
     )
     if context.has_explicit_location:
         return False
-    known_location_words = all_location_words(areas, floors)
-    command_words = set(command.normal_forms)
-    non_generic_words = command_words - GENERIC_WORDS
-    domain_words = set().union(*DOMAIN_WORDS.values())
+    known_location_words = all_location_words(areas, floors) | location_words(ha_objects)
+    command_words = normalized_words(command)
+    non_generic_words = command_words - expanded_words(GENERIC_WORDS)
+    domain_words = expanded_words(set().union(*DOMAIN_WORDS.values()))
     return bool(non_generic_words - domain_words - known_location_words)
 
 
@@ -621,8 +714,7 @@ def is_all_devices_request(
     location_context: LocationContext | None,
 ) -> bool:
     return bool(
-        request_words & DEVICE_WORDS
-        and request_words & ALL_WORDS
+        request_words & ALL_WORDS
         and location_context
         and location_context.has_location
     )
@@ -633,7 +725,8 @@ def location_words(ha_objects: list[HaObject]) -> set[str]:
     for entity in ha_objects:
         for value in (entity.area_name, entity.floor_name, entity.area_id, entity.floor_id):
             if value:
-                words.update(normalize(value).normal_forms)
+                words.update(normalized_words(normalize(value)))
+                words.update(raw_word_variants(value))
     return words
 
 
@@ -641,7 +734,8 @@ def all_location_words(areas: list[Any], floors: list[Any]) -> set[str]:
     words: set[str] = set()
     for entry in [*areas, *floors]:
         for phrase in location_entry_phrases(entry):
-            words.update(normalize(phrase).normal_forms)
+            words.update(normalized_words(normalize(phrase)))
+            words.update(raw_word_variants(phrase))
     return words
 
 
@@ -672,6 +766,8 @@ def score_entity_match(
 
     entity_words = entity_search_words(entity)
     specific_words = entity_words - generic_entity_words(entity_domain)
+    if entity_domain in STATE_ONLY_DOMAINS and not requested_domains:
+        return None
     if requested_domains and not specific_words and entity_domain in requested_domains:
         return EntityMatch(entity=entity, score=30)
 
@@ -688,6 +784,10 @@ def score_phrase_words(
 ) -> int | None:
     specific_words = phrase_words - generic_entity_words(entity_domain)
     matched_specific_words = request_words & specific_words
+    matched_domain_words = request_words & phrase_words & DOMAIN_WORDS.get(entity_domain, set())
+    if matched_domain_words:
+        unmatched_specific_words = specific_words - request_words
+        return 45 + (5 * len(matched_domain_words)) - len(unmatched_specific_words)
     if not matched_specific_words:
         return None
 
@@ -709,7 +809,7 @@ def broad_domain_matches(
         ]
 
     # Широкие команды без комнаты ниже отсекаются как неоднозначные, если есть разные комнаты.
-    request_words = {word for word in command.normal_forms if not word.isdigit()}
+    request_words = normalized_words(command)
     if not requested_domains:
         if not is_all_devices_request(request_words, location_context):
             return []
@@ -749,7 +849,7 @@ def broad_domain_matches(
 
 
 def detect_requested_domains(command: NormalizedText) -> set[str]:
-    request_words = set(command.normal_forms)
+    request_words = normalized_words(command)
     domains: set[str] = set()
     for domain, words in DOMAIN_WORDS.items():
         if request_words & words:
@@ -783,16 +883,27 @@ def split_aliases(aliases: str) -> list[str]:
 
 
 def entity_search_words(entity: HaObject) -> set[str]:
-    words = set(normalize(entity.name).normal_forms)
+    words = normalized_words(normalize(entity.name))
+    words.update(raw_word_variants(entity.name))
     for alias in split_aliases(entity.aliases):
-        words.update(normalize(alias).normal_forms)
+        words.update(normalized_words(normalize(alias)))
+        words.update(raw_word_variants(alias))
+    for location_name in (entity.area_name, entity.floor_name):
+        if location_name:
+            words.update(normalized_words(normalize(location_name)))
+            words.update(raw_word_variants(location_name))
     return {word for word in words if word and word not in GENERIC_WORDS}
 
 
 def entity_phrase_word_sets(entity: HaObject) -> list[set[str]]:
     return [
-        set(normalize(phrase).normal_forms)
-        for phrase in [entity.name, *split_aliases(entity.aliases)]
+        normalized_words(normalize(phrase)) | raw_word_variants(phrase)
+        for phrase in [
+            entity.name,
+            *split_aliases(entity.aliases),
+            entity.area_name or "",
+            entity.floor_name or "",
+        ]
         if phrase.strip()
     ]
 
@@ -926,28 +1037,36 @@ def duration_to_seconds(amount_text: str | None, unit: str) -> int:
     return amount * 60
 
 
-def build_state_answer(entity: HaObject) -> str:
+def build_state_answer(entity: HaObject, command: NormalizedText | None = None) -> str:
     # Состояния Home Assistant переводим в короткий русский ответ для Assist.
     domain = entity.entity_id.split(".", maxsplit=1)[0]
     name = entity.name
     state = entity.state
+    words = normalized_words(command) if command is not None else set()
 
     if domain == "binary_sensor":
-        if state == "on":
-            return f"{name}: открыто"
-        if state == "off":
-            return f"{name}: закрыто"
+        is_open = state == "on"
+        if words & {"закрыть", "закрытый"}:
+            return "нет, открыто" if is_open else "да"
+        if words & {"открыть", "открытый"}:
+            return "да" if is_open else "нет, закрыто"
+        return "открыто" if is_open else "закрыто"
 
     if state in {"on", "off"}:
-        return f"{name}: {'включено' if state == 'on' else 'выключено'}"
+        is_on = state == "on"
+        if words & {"включить", "включенный"}:
+            return "да" if is_on else "нет"
+        if words & {"выключить", "выключенный"}:
+            return "да" if not is_on else "нет"
+        return "включено" if is_on else "выключено"
 
     if state in {"open", "closed"}:
-        return f"{name}: {'открыто' if state == 'open' else 'закрыто'}"
+        return "открыто" if state == "open" else "закрыто"
 
     if domain == "sensor" and looks_like_percent_sensor(entity):
-        return f"{name}: {state}%"
+        return f"{state}%"
 
-    return f"{name}: {state}"
+    return state
 
 
 def looks_like_percent_sensor(entity: HaObject) -> bool:

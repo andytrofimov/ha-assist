@@ -7,61 +7,67 @@
 
   Предыстория:
     Дано доступны сущности:
-      | entity_id                                 | name                                 | state  | aliases                     |
-      | light.living_room                         | Свет гостиная                        | off    | свет в гостиной             |
-      | light.kitchen                             | Свет кухня                           | off    | свет на кухне               |
-      | light.office                              | Свет кабинет                         | on     | свет в кабинете             |
-      | light.floor_1                             | Свет первый этаж                     | off    | свет на первом этаже        |
-      | cover.bedroom_curtain                     | Штора спальня                        | off    | шторы в спальне             |
-      | cover.gate                                | Ворота                               | closed |                             |
-      | scene.movie                               | Режим кино                           | off    |                             |
-      | switch.massage                            | Массаж                               | off    |                             |
-      | climate.bedroom_ac                        | Кондиционер спальня                  | off    | кондиционер в спальне       |
-      | sensor.pool_temperature                   | Температура бассейн                  | 23.4   | температура воды в бассейне |
-      | sensor.pool_temperature_battery           | Температура воды в бассейне Батарея  | 100    |                             |
-      | sensor.pool_temperature_secondary_battery | Температура бассейн темп Батарея     | 100    |                             |
-      | sensor.pool_temperature_secondary         | Температура бассейн темп Температура | 22.1   |                             |
-      | sensor.packet_loss                        | 77.88.8.1 Packet loss                | 0.0    | потеря пакетов              |
-      | media_player.tv                           | Телевизор                            | off    | телек                       |
-      | binary_sensor.office_door                 | Дверь кабинет                        | off    | дверь в кабинет             |
-      | input_boolean.sleep_mode                  | Режим сна                            | off    |                             |
+      | entity_id                                | name                    | state  | aliases         | area_id   | area_name | floor_id | floor_name |
+      | light.svet_gostinnaia                    | Свет гостиная           | off    |                 | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | light.svet_kukhnia                       | Свет кухня              | off    |                 | kukhnia   | Кухня     | vtoroi   | Второй     |
+      | light.svet_kabinet                       | Свет кабинет            | on     |                 | kabinet   | Кабинет   | tretii   | Третий     |
+      | cover.0x54ef441000c8399e                 | Штора спальня           | open   |                 | spalnia   | Спальня   | vtoroi   | Второй     |
+      | cover.kontroller_vorot                   | Ворота                  | closed |                 | ulitsa    | Улица     | ulitsa   | Улица      |
+      | scene.rezhim_kino                        | Режим кино              | off    |                 | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | switch.krovat_massazh                    | Массаж                  | off    |                 | spalnia   | Спальня   | vtoroi   | Второй     |
+      | climate.air_conditioner_1                | Кондей спальня          | off    | кондиционер     | spalnia   | Спальня   | vtoroi   | Второй     |
+      | sensor.0xa4c13804c362ffff_temperature    | Вода в бассейне         | 23.1   |                 | bassein   | Бассейн   | pervyi   | Первый     |
+      | sensor.0xa4c138e5b424f709_temperature    | Температура первый этаж | 22.2   |                 | bassein   | Бассейн   | pervyi   | Первый     |
+      | sensor.packet_loss                       | 77.88.8.1 Packet loss   | 0.0    | потеря пакетов  |           |           |          |            |
+      | media_player.mitv_moeu1                  | media_player.mitv_moeu1 | on     | Телек/телевизор | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | binary_sensor.0x00158d0007075bb6_contact | Дверь кабинет           | on     |                 | kabinet   | Кабинет   | tretii   | Третий     |
+      | input_boolean.rezhim_sna                 | Режим сна               | on     |                 |           |           |          |            |
+    И доступны комнаты:
+      | area_id   | name     | floor_id | aliases |
+      | gostinaia | Гостиная | vtoroi   |         |
+      | kukhnia   | Кухня    | vtoroi   |         |
+      | kabinet   | Кабинет  | tretii   |         |
+    И доступны этажи:
+      | floor_id | name   | aliases | level |
+      | vtoroi   | Второй |         | 2     |
+      | tretii   | Третий |         | 3     |
 
   Сценарий: Включить сцену по названию
     Когда пользователь говорит "режим кино"
     Тогда ассистент вызывает сервисы:
-      | domain | service | entity_id   |
-      | scene  | turn_on | scene.movie |
+      | domain | service | entity_id         |
+      | scene  | turn_on | scene.rezhim_kino |
 
   Сценарий: Включить выключатель по названию
     Когда пользователь говорит "массаж"
     Тогда ассистент вызывает сервисы:
-      | domain | service | entity_id      |
-      | switch | turn_on | switch.massage |
+      | domain | service | entity_id             |
+      | switch | turn_on | switch.krovat_massazh |
 
-  Сценарий: Открыть штору в спальне
-    Когда пользователь говорит "открой штору в спальне"
+  Сценарий: Объект с уникальным названием находится без указания комнаты
+    Когда пользователь говорит "открой штору"
     Тогда ассистент вызывает сервисы:
-      | domain | service    | entity_id             |
-      | cover  | open_cover | cover.bedroom_curtain |
+      | domain | service    | entity_id                |
+      | cover  | open_cover | cover.0x54ef441000c8399e |
 
-  Сценарий: Закрыть ворота
+  Сценарий: Закрытие ворот
     Когда пользователь говорит "закрой ворота"
     Тогда ассистент вызывает сервисы:
-      | domain | service     | entity_id  |
-      | cover  | close_cover | cover.gate |
+      | domain | service     | entity_id              |
+      | cover  | close_cover | cover.kontroller_vorot |
 
   Сценарий: Включить кондиционер в спальне
     Когда пользователь говорит "включи кондиционер в спальне"
     Тогда ассистент вызывает сервисы:
-      | domain  | service | entity_id          |
-      | climate | turn_on | climate.bedroom_ac |
+      | domain  | service | entity_id                 |
+      | climate | turn_on | climate.air_conditioner_1 |
 
   Сценарий: Выключить свет в нескольких комнатах
     Когда пользователь говорит "выключи свет в гостиной и на кухне"
     Тогда ассистент вызывает сервисы:
-      | domain | service  | entity_id         |
-      | light  | turn_off | light.living_room |
-      | light  | turn_off | light.kitchen     |
+      | domain | service  | entity_id             |
+      | light  | turn_off | light.svet_gostinnaia |
+      | light  | turn_off | light.svet_kukhnia    |
 
   Сценарий: Команда с яркостью, длительностью и шторой
     Когда пользователь говорит:
@@ -70,60 +76,54 @@
       и закрой штору в спальне
       """
     Тогда ассистент вызывает сервисы:
-      | domain | service     | entity_id             | brightness_pct | delay_seconds |
-      | light  | turn_on     | light.living_room     | 15             |               |
-      | light  | turn_off    | light.living_room     |                | 900           |
-      | cover  | close_cover | cover.bedroom_curtain |                |               |
+      | domain | service     | entity_id                | brightness_pct | delay_seconds |
+      | light  | turn_on     | light.svet_gostinnaia    | 15             |               |
+      | light  | turn_off    | light.svet_gostinnaia    |                | 900           |
+      | cover  | close_cover | cover.0x54ef441000c8399e |                |               |
 
   Сценарий: Включить кондиционер на полчаса
     Когда пользователь говорит "включи кондиционер в спальне на полчаса"
     Тогда ассистент вызывает сервисы:
-      | domain  | service  | entity_id          | delay_seconds |
-      | climate | turn_on  | climate.bedroom_ac |               |
-      | climate | turn_off | climate.bedroom_ac | 1800          |
+      | domain  | service  | entity_id                 | delay_seconds |
+      | climate | turn_on  | climate.air_conditioner_1 |               |
+      | climate | turn_off | climate.air_conditioner_1 | 1800          |
 
   Сценарий: Отложенно выключить свет
     Когда пользователь говорит "выключи свет в кабинете через 15 минут"
     Тогда ассистент вызывает сервисы:
-      | domain | service  | entity_id    | delay_seconds |
-      | light  | turn_off | light.office | 900           |
+      | domain | service  | entity_id          | delay_seconds |
+      | light  | turn_off | light.svet_kabinet | 900           |
 
-  Сценарий: Выключить свет на этаже по названию entity
-    Когда пользователь говорит "выключи свет на первом этаже"
-    Тогда ассистент вызывает сервисы:
-      | domain | service  | entity_id     |
-      | light  | turn_off | light.floor_1 |
-
-  Сценарий: Установить яркость всего света без комнат в старом наборе данных
+  Сценарий: Установить яркость света без комнаты нельзя
     Когда пользователь говорит "включи свет на 15 процентов"
-    Тогда ассистент вызывает сервисы:
-      | domain | service | entity_id         | brightness_pct |
-      | light  | turn_on | light.living_room | 15             |
-      | light  | turn_on | light.kitchen     | 15             |
-      | light  | turn_on | light.office      | 15             |
-      | light  | turn_on | light.floor_1     | 15             |
+    Тогда ответ ассистента равен "Уточните комнату."
+    И ассистент не вызывает сервисы
 
-  Сценарий: Спросить состояние телевизора
-    Когда пользователь говорит "телевизор включен?"
-    Тогда ответ ассистента содержит "Телевизор: выключено"
+  Сценарий: Коротки ответ состояния объекта
+    Когда пользователь говорит "телек включен?"
+    Тогда ответ ассистента содержит "да"
 
   Сценарий: Спросить состояние двери
-    Когда пользователь говорит "дверь в кабинет закрыта?"
-    Тогда ответ ассистента содержит "Дверь кабинет: закрыто"
+    Когда пользователь говорит "дверь в кабинет закрыта"
+    Тогда ответ ассистента содержит "нет, открыто"
+
+  Сценарий: Спросить состояние двери
+    Когда пользователь говорит "что с дверью в кабинете"
+    Тогда ответ ассистента содержит "открыто"
 
   Сценарий: Спросить состояние режима сна
     Когда пользователь говорит "режим сна включен?"
-    Тогда ответ ассистента содержит "Режим сна: выключено"
+    Тогда ответ ассистента содержит "да"
 
   Сценарий: Спросить температуру бассейна
     Когда пользователь говорит "какая температура в бассейне?"
-    Тогда ответ ассистента равен "Температура бассейн: 23.4"
-    И ответ ассистента не содержит "Батарея"
+    Тогда ответ ассистента равен "23.1"
+    И ответ ассистента не содержит "22.2"
     И ответ ассистента не содержит "22.1"
 
   Сценарий: Спросить потерю пакетов
     Когда пользователь говорит "сколько процентов потеря пакетов?"
-    Тогда ответ ассистента содержит "77.88.8.1 Packet loss: 0.0%"
+    Тогда ответ ассистента содержит "0"
 
   Сценарий: Неумный запрос уходит в LLM fallback
     Когда пользователь говорит "расскажи анекдот"

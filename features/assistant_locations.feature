@@ -8,22 +8,23 @@
 
   Предыстория:
     Дано доступны сущности:
-      | entity_id         | name                | state | aliases         | area_id | area_name | floor_id | floor_name |
-      | light.living_room | Свет гостиная       | off   | свет в гостиной | living  | Гостиная  | floor_2  | Второй     |
-      | light.kitchen     | Свет кухня          | off   | свет на кухне   | kitchen | Кухня     | floor_2  | Второй     |
-      | switch.kettle     | Чайник              | off   |                 | kitchen | Кухня     | floor_2  | Второй     |
-      | climate.office_ac | Кондиционер кабинет | off   | кондиционер     | office  | Кабинет   | floor_3  | Третий     |
-      | light.office      | Свет кабинет        | off   |                 | office  | Кабинет   | floor_3  | Третий     |
-      | scene.movie       | Режим кино          | off   |                 | living  | Гостиная  | floor_2  | Второй     |
+      | entity_id                          | name                | state | aliases | area_id   | area_name | floor_id | floor_name |
+      | light.svet_gostinnaia              | Свет гостиная       | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | light.svet_kukhnia                 | Свет кухня          | off   |         | kukhnia   | Кухня     | vtoroi   | Второй     |
+      | switch.chainik                     | Чайник              | off   |         | kukhnia   | Кухня     | vtoroi   | Второй     |
+      | light.svet_kabinet                 | Свет кабинет        | on    |         | kabinet   | Кабинет   | tretii   | Третий     |
+      | scene.rezhim_kino                  | Режим кино          | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | light.yeelink_ceil43_9a4b_light    | Люстра гостиная     | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | light.yeelink_ceilc_a6e6_ambient_light | Подсветка кухня | off   |         | kukhnia   | Кухня     | vtoroi   | Второй     |
     И доступны комнаты:
       | area_id | name     | floor_id | aliases |
-      | living  | Гостиная | floor_2  |         |
-      | kitchen | Кухня    | floor_2  |         |
-      | office  | Кабинет  | floor_3  |         |
+      | gostinaia | Гостиная | vtoroi  |         |
+      | kukhnia   | Кухня    | vtoroi  |         |
+      | kabinet   | Кабинет  | tretii  |         |
     И доступны этажи:
       | floor_id | name   | aliases     | level |
-      | floor_2  | Второй | второй этаж | 2     |
-      | floor_3  | Третий | третий этаж | 3     |
+      | vtoroi   | Второй |             | 2     |
+      | tretii   | Третий |             | 3     |
 
   Сценарий: Ошибка для неизвестной комнаты
     Когда пользователь говорит "выключи свет в гараже"
@@ -38,23 +39,27 @@
   Сценарий: Использовать комнату колонки если комната не указана
     Допустим запрос пришел из комнаты:
       | source_area_id | source_area_name |
-      | kitchen        | Кухня            |
+      | kukhnia        | Кухня            |
     Когда пользователь говорит "выключи свет"
     Тогда ассистент вызывает сервисы:
-      | domain | service  | entity_id     |
-      | light  | turn_off | light.kitchen |
+      | domain | service  | entity_id          |
+      | light  | turn_off | light.svet_kukhnia |
 
   Сценарий: Выключить весь свет на этаже
-    Когда пользователь говорит "выключи весь свет на втором этаже"
+    Когда пользователь говорит "выключи свет на втором этаже"
     Тогда ассистент вызывает сервисы:
       | domain | service  | entity_id         |
-      | light  | turn_off | light.living_room |
-      | light  | turn_off | light.kitchen     |
+      | light  | turn_off | light.svet_gostinnaia |
+      | light  | turn_off | light.svet_kukhnia     |
+      | light  | turn_off | light.yeelink_ceil43_9a4b_light |
+      | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
 
   Сценарий: Выключить все устройства на этаже
-    Когда пользователь говорит "выключи все устройства на втором этаже"
+    Когда пользователь говорит "выключи все на втором этаже"
     Тогда ассистент вызывает сервисы:
       | domain | service  | entity_id         |
-      | light  | turn_off | light.living_room |
-      | light  | turn_off | light.kitchen     |
-      | switch | turn_off | switch.kettle     |
+      | light  | turn_off | light.svet_gostinnaia |
+      | light  | turn_off | light.svet_kukhnia     |
+      | switch | turn_off | switch.chainik         |
+      | light  | turn_off | light.yeelink_ceil43_9a4b_light |
+      | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
