@@ -7,21 +7,26 @@
 
   Предыстория:
     Дано доступны сущности:
-      | entity_id                                | name                    | state | aliases         | area_id   | area_name | floor_id | floor_name | unit_of_measurement |
-      | sensor.0xa4c13804c362ffff_temperature    | Вода в бассейне         | 23.1  |                 | bassein   | Бассейн   | pervyi   | Первый     | °C                  |
-      | sensor.0xa4c138e5b424f709_temperature    | Температура первый этаж | 22.2  |                 | bassein   | Бассейн   | pervyi   | Первый     | °C                  |
-      | sensor.packet_loss                       | 77.88.8.1 Packet loss   | 0.0   | потеря пакетов  |           |           |          |            | %                   |
-      | media_player.mitv_moeu1                  | media_player.mitv_moeu1 | on    | Телек/телевизор | gostinaia | Гостиная  | vtoroi   | Второй     |                     |
-      | switch.chainik                           | Чайник                  | on    |                 | kukhnia   | Кухня     | vtoroi   | Второй     |                     |
-      | switch.nasos                             | Насос                   | off   |                 | bassein   | Бассейн   | pervyi   | Первый     |                     |
-      | binary_sensor.0x00158d0007075bb6_contact | Дверь кабинет           | on    |                 | kabinet   | Кабинет   | tretii   | Третий     |                     |
-      | binary_sensor.vorota_contact             | Ворота                  | off   |                 | ulitsa    | Улица     | ulitsa   | Улица      |                     |
+      | entity_id                                | name                    | state | aliases         | area_id   | area_name | floor_id | floor_name | unit_of_measurement | temperature |
+      | sensor.0xa4c13804c362ffff_temperature    | Вода в бассейне         | 23.1  |                 | bassein   | Бассейн   | pervyi   | Первый     | °C                  |             |
+      | sensor.0xa4c138e5b424f709_temperature    | Температура первый этаж | 22.2  |                 | bassein   | Бассейн   | pervyi   | Первый     | °C                  |             |
+      | sensor.temperature_ulitsa                | Температура улица       | 7.4   |                 | ulitsa    | Улица     | ulitsa   | Улица      | °C                  |             |
+      | sensor.temperature_1                     | Температура один        | 1.2   |                 | kabinet   | Кабинет   | tretii   | Третий     | °C                  |             |
+      | sensor.temperature_5                     | Температура пять        | 5.4   |                 | kabinet   | Кабинет   | tretii   | Третий     | °C                  |             |
+      | sensor.packet_loss                       | 77.88.8.1 Packet loss   | 0.0   | потеря пакетов  |           |           |          |            | %                   |             |
+      | weather.home                             | Погода                  | sunny | погода          | ulitsa    | Улица     | ulitsa   | Улица      |                     | 23.1        |
+      | media_player.mitv_moeu1                  | media_player.mitv_moeu1 | on    | Телек/телевизор | gostinaia | Гостиная  | vtoroi   | Второй     |                     |             |
+      | switch.chainik                           | Чайник                  | on    |                 | kukhnia   | Кухня     | vtoroi   | Второй     |                     |             |
+      | switch.nasos                             | Насос                   | off   |                 | bassein   | Бассейн   | pervyi   | Первый     |                     |             |
+      | binary_sensor.0x00158d0007075bb6_contact | Дверь кабинет           | on    |                 | kabinet   | Кабинет   | tretii   | Третий     |                     |             |
+      | binary_sensor.vorota_contact             | Ворота                  | off   |                 | ulitsa    | Улица     | ulitsa   | Улица      |                     |             |
     И доступны комнаты:
       | area_id   | name     | floor_id | aliases |
       | gostinaia | Гостиная | vtoroi   |         |
       | kukhnia   | Кухня    | vtoroi   |         |
       | kabinet   | Кабинет  | tretii   |         |
       | bassein   | Бассейн  | pervyi   |         |
+      | ulitsa    | Улица    | ulitsa   |         |
     И доступны этажи:
       | floor_id | name   | aliases | level |
       | pervyi   | Первый |         | 1     |
@@ -62,9 +67,33 @@
 
   Сценарий: Вернуть значение сенсора из указанной зоны
     Когда пользователь говорит "какая температура в бассейне?"
-    Тогда ответ ассистента равен "23.1"
+    Тогда ответ ассистента равен "23 градуса"
     И ответ ассистента не содержит "22.2"
     И ответ ассистента не содержит "22.1"
+
+  Структура сценария: Вернуть температуру целым числом со склонением градусов
+    Когда пользователь говорит "<text>"
+    Тогда ответ ассистента равен "<response>"
+
+    Примеры:
+      | text                           | response   |
+      | какая температура первый этаж? | 22 градуса |
+      | какая температура один?        | 1 градус   |
+      | какая температура пять?        | 5 градусов |
+
+  Структура сценария: Вернуть состояние погоды
+    Когда пользователь говорит "<text>"
+    Тогда ответ ассистента равен "ясно, 23 градуса"
+
+    Примеры:
+      | text                   |
+      | какая погода?          |
+      | какая погода на улице? |
+      | погода                 |
+
+  Сценарий: Температура на улице выбирает сенсор, а не погоду
+    Когда пользователь говорит "какая температура улица?"
+    Тогда ответ ассистента равен "7 градусов"
 
   Сценарий: Вернуть значение процентного сенсора
     Когда пользователь говорит "сколько процентов потеря пакетов?"

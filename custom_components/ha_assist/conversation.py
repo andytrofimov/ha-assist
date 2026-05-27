@@ -176,6 +176,9 @@ class HaAssistConversationEntity(
                     "unit_of_measurement": state.attributes.get(ATTR_UNIT_OF_MEASUREMENT),
                     "device_class": state.attributes.get("device_class"),
                     "hvac_modes": state.attributes.get("hvac_modes") or None,
+                    "temperature": state.attributes.get("temperature"),
+                    "humidity": state.attributes.get("humidity"),
+                    "wind_speed": state.attributes.get("wind_speed"),
                 }
             )
 

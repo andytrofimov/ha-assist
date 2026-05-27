@@ -15,6 +15,8 @@
       | cover.kontroller_vorot                | Ворота           | closed |             | ulitsa    | Улица     | ulitsa   | Улица      |
       | scene.kino                | Сцена кино     | off    |             | gostinaia | Гостиная  | vtoroi   | Второй     |
       | switch.krovat_massazh                 | Массаж           | off    |             | spalnia   | Спальня   | vtoroi   | Второй     |
+      | switch.ventilation        | Device ABC     | off    | Включить вентиляцию | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | button.restart_zigbee     | Restart Zigbee | off    | Перезапустить зигби |           |           |          |            |
       | climate.air_conditioner_1             | Кондей спальня   | off    | кондиционер | spalnia   | Спальня   | vtoroi   | Второй     |
     И доступны комнаты:
       | area_id   | name     | floor_id | aliases |
@@ -38,6 +40,18 @@
     Тогда ассистент вызывает сервисы:
       | domain | service | entity_id             |
       | switch | turn_on | switch.krovat_massazh |
+
+  Сценарий: Нажать кнопку по алиасу
+    Когда пользователь говорит "перезапусти зигби"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id             |
+      | button | press   | button.restart_zigbee |
+
+  Сценарий: Найти сущность по нормализованному алиасу
+    Когда пользователь говорит "включи вентиляцию"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id          |
+      | switch | turn_on | switch.ventilation |
 
   Сценарий: Объект с уникальным названием находится без указания комнаты
     Когда пользователь говорит "открой штору"

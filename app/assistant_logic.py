@@ -44,7 +44,7 @@ TURNABLE_DOMAINS = {
     "vacuum",
 }
 
-STATE_ONLY_DOMAINS = {"binary_sensor", "sensor"}
+STATE_ONLY_DOMAINS = {"binary_sensor", "sensor", "weather"}
 DEVICE_WORDS = {"устройство", "устройства", "прибор", "приборы"}
 ALL_WORDS = {"весь", "все", "всё", "вся", "всей", "всю"}
 
@@ -65,6 +65,7 @@ DOMAIN_WORDS = {
     "input_boolean": set(),
     "scene": {"сцена"},
     "media_player": {"телевизор", "телек", "тв", "колонка", "плеер"},
+    "weather": {"погода", "прогноз"},
     "sensor": {
         "температура",
         "влажность",
@@ -230,7 +231,10 @@ def build_assist_result(
             return llm_fallback_result()
 
         if action is None and matches:
-            action = "turn_on" if all(is_turnable(match.entity) for match in matches) else None
+            if all(entity_domain(match.entity) == "button" for match in matches):
+                action = "press"
+            else:
+                action = "turn_on" if all(is_turnable(match.entity) for match in matches) else None
 
         if action is None:
             if found_smart_home_signal:
@@ -434,6 +438,8 @@ def is_state_query(command: NormalizedText) -> bool:
     if text.endswith("?"):
         return True
     if words & {"сколько", "какой", "какая", "какое", "что"}:
+        return True
+    if words & DOMAIN_WORDS["weather"]:
         return True
     if (words & {"включить", "открыть", "закрыть"}) and not (
         words & (TURN_ON_WORDS | TURN_OFF_WORDS | OPEN_WORDS | CLOSE_WORDS)
@@ -1093,7 +1099,14 @@ def service_for_action(domain: str, action: str) -> str | None:
     if action == "set_temperature" and domain == "climate":
         return "set_temperature"
 
+    if action == "press" and domain == "button":
+        return "press"
+
     return None
+
+
+def entity_domain(entity: HaObject) -> str:
+    return entity.entity_id.split(".", maxsplit=1)[0]
 
 
 def parse_timing(text: str) -> ParsedTiming:
@@ -1136,7 +1149,86 @@ def build_state_answer(entity: HaObject, command: NormalizedText | None = None) 
     if domain == "sensor" and entity.unit_of_measurement == "%":
         return f"{state}%"
 
+    if domain == "sensor" and is_temperature_unit(entity.unit_of_measurement):
+        return format_temperature_state(state)
+
+    if domain == "weather":
+        return build_weather_answer(entity)
+
     return state
+
+
+WEATHER_STATE_WORDS = {
+    "clear-night": "ясно",
+    "cloudy": "облачно",
+    "exceptional": "необычная погода",
+    "fog": "туман",
+    "hail": "град",
+    "lightning": "гроза",
+    "lightning-rainy": "гроза с дождем",
+    "partlycloudy": "переменная облачность",
+    "pouring": "ливень",
+    "rainy": "дождь",
+    "snowy": "снег",
+    "snowy-rainy": "снег с дождем",
+    "sunny": "ясно",
+    "windy": "ветрено",
+    "windy-variant": "ветрено с облачностью",
+}
+
+
+def build_weather_answer(entity: HaObject) -> str:
+    parts = [WEATHER_STATE_WORDS.get(entity.state, entity.state)]
+    temperature = format_temperature_value(entity.temperature)
+    if temperature:
+        parts.append(temperature)
+    return ", ".join(parts)
+
+
+def format_temperature_value(value: str | int | float | None) -> str:
+    if value is None:
+        return ""
+    parsed_value = parse_float(str(value))
+    if parsed_value is None:
+        return ""
+    temperature = round_half_up(parsed_value)
+    return f"{temperature} {degree_word(temperature)}"
+
+
+def is_temperature_unit(unit: str | None) -> bool:
+    return unit in {"°", "°C", "°F"}
+
+
+def format_temperature_state(state: str) -> str:
+    value = parse_float(state)
+    if value is None:
+        return state
+    temperature = round_half_up(value)
+    return f"{temperature} {degree_word(temperature)}"
+
+
+def parse_float(value: str) -> float | None:
+    try:
+        return float(value.replace(",", "."))
+    except ValueError:
+        return None
+
+
+def round_half_up(value: float) -> int:
+    if value >= 0:
+        return int(value + 0.5)
+    return int(value - 0.5)
+
+
+def degree_word(value: int) -> str:
+    value = abs(value)
+    if 11 <= value % 100 <= 14:
+        return "градусов"
+    if value % 10 == 1:
+        return "градус"
+    if 2 <= value % 10 <= 4:
+        return "градуса"
+    return "градусов"
 
 
 def yes_no_state_answer(

@@ -20,22 +20,41 @@ def int_or_none(value: str) -> int | None:
 
 def entities_from_table(table: Any) -> list[HaObject]:
     entities: list[HaObject] = []
+    known_columns = {
+        "entity_id",
+        "name",
+        "state",
+        "aliases",
+        "area_id",
+        "area_name",
+        "floor_id",
+        "floor_name",
+        "unit_of_measurement",
+        "device_class",
+        "hvac_modes",
+    }
     for row in table:
-        entities.append(
-            HaObject(
-                entity_id=row_value(row, "entity_id"),
-                name=row_value(row, "name"),
-                state=row_value(row, "state"),
-                aliases=row_value(row, "aliases"),
-                area_id=row_value(row, "area_id") or None,
-                area_name=row_value(row, "area_name") or None,
-                floor_id=row_value(row, "floor_id") or None,
-                floor_name=row_value(row, "floor_name") or None,
-                unit_of_measurement=row_value(row, "unit_of_measurement") or None,
-                device_class=row_value(row, "device_class") or None,
-                hvac_modes=split_cell(row_value(row, "hvac_modes")),
-            ),
+        entity_data: dict[str, Any] = {
+            "entity_id": row_value(row, "entity_id"),
+            "name": row_value(row, "name"),
+            "state": row_value(row, "state"),
+            "aliases": row_value(row, "aliases"),
+            "area_id": row_value(row, "area_id") or None,
+            "area_name": row_value(row, "area_name") or None,
+            "floor_id": row_value(row, "floor_id") or None,
+            "floor_name": row_value(row, "floor_name") or None,
+            "unit_of_measurement": row_value(row, "unit_of_measurement") or None,
+            "device_class": row_value(row, "device_class") or None,
+            "hvac_modes": split_cell(row_value(row, "hvac_modes")),
+        }
+        entity_data.update(
+            {
+                heading: row_value(row, heading)
+                for heading in table.headings
+                if heading not in known_columns and row_value(row, heading)
+            },
         )
+        entities.append(HaObject(**entity_data))
     return entities
 
 
