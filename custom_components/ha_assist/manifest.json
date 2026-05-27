@@ -1,6 +1,6 @@
 {
   "domain": "ha_assist",
-  "name": "HA Assist Service",
+  "name": "Dysha's Assistant",
   "codeowners": [],
   "config_flow": true,
   "dependencies": ["conversation"],

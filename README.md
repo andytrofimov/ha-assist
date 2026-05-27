@@ -1,4 +1,4 @@
-# HA Assist Service
+# Dysha's Assistant
 
 Minimal Home Assistant Assist conversation agent that sends the user text and available entities to a local HTTP service.
 
@@ -6,7 +6,7 @@ Minimal Home Assistant Assist conversation agent that sends the user text and av
 
 1. Add this repository to HACS as a custom repository.
 2. Select the repository type `Integration`.
-3. Install `HA Assist Service`.
+3. Install `Dysha's Assistant`.
 4. Restart Home Assistant.
 5. Add the integration from Settings -> Devices & services.
 

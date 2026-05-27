@@ -1,4 +1,4 @@
-"""Conversation platform for HA Assist Service."""
+"""Платформа диалогового агента HA Assist Service."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import Any, Literal
 from aiohttp import ClientError, ClientResponseError
 
 from homeassistant.components import conversation
+from homeassistant.components.homeassistant.exposed_entities import async_should_expose
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_FRIENDLY_NAME, CONF_NAME, MATCH_ALL
 from homeassistant.core import HomeAssistant
@@ -26,7 +27,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up conversation entities."""
+    """Создает сущность диалогового агента для записи интеграции."""
     async_add_entities([HaAssistConversationEntity(entry)])
 
 
@@ -34,37 +35,37 @@ class HaAssistConversationEntity(
     conversation.ConversationEntity,
     conversation.AbstractConversationAgent,
 ):
-    """Conversation agent backed by a local HTTP service."""
+    """Диалоговый агент, который обращается к локальному HTTP-сервису."""
 
     _attr_has_entity_name = True
     _attr_supported_features = conversation.ConversationEntityFeature.CONTROL
 
     def __init__(self, entry: ConfigEntry) -> None:
-        """Initialize the agent."""
+        """Запоминает config entry и настраивает имя сущности агента."""
         self._entry = entry
         self._attr_name = entry.data[CONF_NAME]
         self._attr_unique_id = entry.entry_id
 
     async def async_added_to_hass(self) -> None:
-        """Register this entity as a conversation agent."""
+        """Регистрирует эту сущность как агента диалогов Home Assistant."""
         await super().async_added_to_hass()
         conversation.async_set_agent(self.hass, self._entry, self)
 
     async def async_will_remove_from_hass(self) -> None:
-        """Unregister this entity as a conversation agent."""
+        """Снимает регистрацию агента диалогов при выгрузке сущности."""
         conversation.async_unset_agent(self.hass, self._entry)
         await super().async_will_remove_from_hass()
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
-        """Return supported languages."""
+        """Возвращает список поддерживаемых языков."""
         return MATCH_ALL
 
     async def async_process(
         self,
         user_input: conversation.ConversationInput,
     ) -> conversation.ConversationResult:
-        """Process a sentence."""
+        """Обрабатывает фразу пользователя и возвращает ответ диалога."""
         response = intent.IntentResponse(language=user_input.language)
 
         try:
@@ -94,7 +95,7 @@ class HaAssistConversationEntity(
         self,
         user_input: conversation.ConversationInput,
     ) -> dict[str, Any]:
-        """Send the Assist request to the configured service."""
+        """Отправляет запрос пользователя в настроенный локальный сервис."""
         session = async_get_clientsession(self.hass)
         async with asyncio.timeout(DEFAULT_TIMEOUT):
             http_response = await session.post(
@@ -114,7 +115,7 @@ class HaAssistConversationEntity(
         return data
 
     def _entities_payload(self) -> list[dict[str, Any]]:
-        """Return Home Assistant entities for the external service."""
+        """Собирает exposed-сущности Home Assistant для локального сервиса."""
         registry = er.async_get(self.hass)
         entities: list[dict[str, Any]] = []
 
@@ -123,6 +124,12 @@ class HaAssistConversationEntity(
             if registry_entry is not None and (
                 registry_entry.disabled_by is not None
                 or registry_entry.hidden_by is not None
+            ):
+                continue
+            if not async_should_expose(
+                self.hass,
+                conversation.DOMAIN,
+                state.entity_id,
             ):
                 continue
 
@@ -150,15 +157,79 @@ class HaAssistConversationEntity(
         service_call: dict[str, Any],
         user_input: conversation.ConversationInput,
     ) -> None:
-        """Execute a service call returned by the Assist service."""
+        """Выполняет сервисный вызов из ответа локального сервиса."""
+        delay_seconds = service_call.get("delay_seconds")
+        if isinstance(delay_seconds, int | float) and delay_seconds > 0:
+            self.hass.async_create_task(
+                self._async_delayed_execute_service_call(service_call, user_input),
+            )
+            return
+
+        await self._async_execute_assist_intent(service_call, user_input)
+
+    async def _async_execute_assist_intent(
+        self,
+        service_call: dict[str, Any],
+        user_input: conversation.ConversationInput,
+    ) -> None:
+        """Выполняет обычный сервисный вызов через Assist intent API."""
+        intent_type, slots = self._assist_intent_payload(service_call)
+        await intent.async_handle(
+            self.hass,
+            conversation.DOMAIN,
+            intent_type,
+            slots=slots,
+            text_input=user_input.text,
+            context=user_input.context,
+            language=user_input.language,
+            assistant=conversation.DOMAIN,
+            conversation_agent_id=self.entity_id,
+        )
+
+    def _assist_intent_payload(
+        self,
+        service_call: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        """Преобразует сервисный вызов в intent и slots для Assist."""
         domain = service_call["domain"]
         service = service_call["service"]
         service_data = service_call.get("service_data") or {}
+        entity_id = service_data["entity_id"]
 
-        await self.hass.services.async_call(
-            domain,
-            service,
-            service_data,
-            blocking=True,
-            context=user_input.context,
-        )
+        slots: dict[str, Any] = {
+            "name": {
+                "value": entity_id,
+                "text": entity_id,
+            },
+            "domain": {
+                "value": [domain],
+            },
+        }
+        if brightness_pct := service_data.get("brightness_pct"):
+            slots["brightness"] = {
+                "value": brightness_pct,
+            }
+
+        if service == "turn_on":
+            return intent.INTENT_TURN_ON, slots
+        if service == "turn_off":
+            return intent.INTENT_TURN_OFF, slots
+        if domain == "cover" and service in {"open_cover", "close_cover"}:
+            slots["position"] = {
+                "value": 100 if service == "open_cover" else 0,
+            }
+            return intent.INTENT_SET_POSITION, slots
+
+        raise ValueError(f"Unsupported Assist service call: {service_call}")
+
+    async def _async_delayed_execute_service_call(
+        self,
+        service_call: dict[str, Any],
+        user_input: conversation.ConversationInput,
+    ) -> None:
+        """Выполняет сервисный вызов после указанной задержки."""
+        await asyncio.sleep(float(service_call["delay_seconds"]))
+        delayed_call = {
+            key: value for key, value in service_call.items() if key != "delay_seconds"
+        }
+        await self._async_execute_service_call(delayed_call, user_input)

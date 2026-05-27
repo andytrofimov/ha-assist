@@ -1,4 +1,4 @@
-"""Config flow for HA Assist Service."""
+"""Config flow for Dysha's Assistant."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from .const import CONF_ASSIST_URL, DEFAULT_ASSIST_URL, DOMAIN
 
 
 class HaAssistConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for HA Assist Service."""
+    """Handle a config flow for Dysha's Assistant."""
 
     VERSION = 1
 
@@ -48,7 +48,7 @@ class HaAssistConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=self.add_suggested_values_to_schema(
                 vol.Schema(
                     {
-                        vol.Required(CONF_NAME, default="HA Assist Service"): str,
+                        vol.Required(CONF_NAME, default="Dysha's Assistant"): str,
                         vol.Required(CONF_ASSIST_URL, default=DEFAULT_ASSIST_URL): TextSelector(
                             TextSelectorConfig(type=TextSelectorType.URL)
                         ),

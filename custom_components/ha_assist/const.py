@@ -1,4 +1,4 @@
-"""Constants for HA Assist Service."""
+"""Constants for Dysha's Assistant."""
 
 from homeassistant.const import Platform
 
