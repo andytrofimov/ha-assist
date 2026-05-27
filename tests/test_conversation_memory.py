@@ -1,4 +1,4 @@
-from app.conversation_memory import (
+from ha_assist_core.conversation_memory import (
     build_llm_messages,
     clear_memory,
     remember_exchange,

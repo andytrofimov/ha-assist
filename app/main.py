@@ -6,9 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from app.api_models import AssistRequest, AssistResponse
-from app.assistant_logic import build_assist_result_with_llm
-from app.conversation_memory import build_llm_messages, remember_exchange
-from app.ha_parser import HaObject
+from ha_assist_core.assist_processor import process_assist_payload
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,29 +28,20 @@ async def process_assist_request(request: AssistRequest) -> AssistResponse:
     await asyncio.to_thread(save_assist_request_snapshot, request)
     logger.info("Saved latest assist request snapshot")
 
-    ha_objects = [
-        HaObject.model_validate(entity.model_dump())
-        for entity in request.entities
-    ]
-    result = await build_assist_result_with_llm(
+    result = await process_assist_payload(
         text=request.text,
-        ha_objects=ha_objects,
+        entities=[entity.model_dump() for entity in request.entities],
         areas=[area.model_dump() for area in request.areas],
         floors=[floor.model_dump() for floor in request.floors],
+        conversation_id=request.conversation_id,
         source_area_id=request.source_area_id,
         source_area_name=request.source_area_name,
         source_floor_id=request.source_floor_id,
         source_floor_name=request.source_floor_name,
-        llm_messages=build_llm_messages(request.conversation_id, request.text),
     )
     response = AssistResponse(
-        response=add_tts_trailing_period(result.response),
-        service_calls=result.service_calls,
-    )
-    remember_exchange(
-        conversation_id=request.conversation_id,
-        user_text=request.text,
-        assistant_text=response.response,
+        response=result["response"],
+        service_calls=result["service_calls"],
     )
     logger.info(
         "Assist response: %s; service_calls=%s",

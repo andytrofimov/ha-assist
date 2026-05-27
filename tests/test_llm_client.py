@@ -1,6 +1,6 @@
 import pytest
 
-from app import llm_client
+from ha_assist_core import llm_client
 
 
 def test_llm_api_key_is_read_from_file(
@@ -71,3 +71,38 @@ def test_llm_payload_includes_full_message_history(
             "content": "а какой у нее размер?",
         },
     ]
+
+
+def test_llm_api_key_can_be_passed_directly(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_api_key = None
+
+    def fake_post_chat_completion(payload, api_key):
+        nonlocal captured_api_key
+        captured_api_key = api_key
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "ответ",
+                    },
+                },
+            ],
+        }
+
+    monkeypatch.setattr(llm_client, "read_api_key", lambda: None)
+    monkeypatch.setattr(llm_client, "post_chat_completion", fake_post_chat_completion)
+
+    response = llm_client.generate_llm_response_sync(
+        [
+            {
+                "role": "user",
+                "content": "расскажи про луну",
+            },
+        ],
+        api_key="direct-key",
+    )
+
+    assert response == "ответ"
+    assert captured_api_key == "direct-key"

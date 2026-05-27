@@ -13,8 +13,8 @@ AI_MODEL = "deepseek-v4-flash"
 AI_TIMEOUT = 20
 AI_MAX_TOKENS = 300
 
-# Ключ хранится отдельно от кода и игнорируется git.
-AI_API_KEY_FILE = Path(__file__).resolve().parent.parent / "deepseek_api_key.txt"
+# Ключ сервиса хранится отдельно от кода и игнорируется git.
+AI_API_KEY_FILE = Path(__file__).resolve().parents[3] / "deepseek_api_key.txt"
 
 SYSTEM_PROMPT = """Ты русскоязычный голосовой ассистент.
 Отвечай кратко, буквально парой предложений чтобы TTS не занимал слишком много времени. Стиль разговорный, не очень формальный.
@@ -39,12 +39,18 @@ def system_message() -> dict[str, str]:
     }
 
 
-async def generate_llm_response(messages: list[ChatMessage]) -> str | None:
-    return await asyncio.to_thread(generate_llm_response_sync, messages)
+async def generate_llm_response(
+        messages: list[ChatMessage],
+        api_key: str | None = None,
+) -> str | None:
+    return await asyncio.to_thread(generate_llm_response_sync, messages, api_key)
 
 
-def generate_llm_response_sync(messages: list[ChatMessage]) -> str | None:
-    api_key = read_api_key()
+def generate_llm_response_sync(
+        messages: list[ChatMessage],
+        api_key: str | None = None,
+) -> str | None:
+    api_key = api_key or read_api_key()
     if not api_key:
         logger.info("LLM request skipped: DeepSeek API key file is missing or empty")
         return None

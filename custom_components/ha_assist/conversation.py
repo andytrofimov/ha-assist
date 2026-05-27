@@ -28,7 +28,8 @@ from homeassistant.helpers import (
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_ASSIST_URL, DEFAULT_TIMEOUT
+from .const import CONF_ASSIST_URL, CONF_LLM_API_KEY, CONF_LOCAL, DEFAULT_TIMEOUT
+from .ha_assist_core.assist_processor import process_assist_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ class HaAssistConversationEntity(
     def __init__(self, entry: ConfigEntry) -> None:
         """Запоминает config entry и настраивает имя сущности агента."""
         self._entry = entry
-        self._attr_name = entry.data[CONF_NAME]
+        self._attr_name = entry.options.get(CONF_NAME, entry.data[CONF_NAME])
         self._attr_unique_id = entry.entry_id
 
     async def async_added_to_hass(self) -> None:
@@ -80,15 +81,22 @@ class HaAssistConversationEntity(
         response = intent.IntentResponse(language=user_input.language)
 
         try:
-            result = await self._async_call_service(user_input)
+            if self._entry.options.get(
+                    CONF_LOCAL,
+                    self._entry.data.get(CONF_LOCAL, False),
+            ):
+                result = await self._async_process_local(user_input)
+            else:
+                result = await self._async_call_service(user_input)
             for service_call in result.get("service_calls", []):
                 await self._async_execute_service_call(service_call, user_input)
             response.async_set_speech(str(result.get("response") or ""))
         except (TimeoutError, ClientError, ClientResponseError):
             _LOGGER.exception("Failed to call HA Assist service")
+            response.async_set_speech("Сервис недоступен")
             response.async_set_error(
                 intent.IntentResponseErrorCode.UNKNOWN,
-                "HA Assist service is unavailable",
+                "Сервис недоступен",
             )
         except Exception:
             _LOGGER.exception("Unexpected HA Assist service error")
@@ -110,16 +118,11 @@ class HaAssistConversationEntity(
         session = async_get_clientsession(self.hass)
         async with asyncio.timeout(DEFAULT_TIMEOUT):
             http_response = await session.post(
-                self._entry.data[CONF_ASSIST_URL],
-                json={
-                    "text": user_input.text,
-                    "language": user_input.language,
-                    "conversation_id": user_input.conversation_id,
-                    "entities": self._entities_payload(),
-                    "areas": self._areas_payload(),
-                    "floors": self._floors_payload(),
-                    **self._source_payload(user_input),
-                },
+                self._entry.options.get(
+                    CONF_ASSIST_URL,
+                    self._entry.data[CONF_ASSIST_URL],
+                ),
+                json=self._assist_payload(user_input),
             )
             http_response.raise_for_status()
             data = await http_response.json()
@@ -127,6 +130,40 @@ class HaAssistConversationEntity(
         if not isinstance(data, dict):
             raise ValueError("Assist service response must be a JSON object")
         return data
+
+    async def _async_process_local(
+            self,
+            user_input: conversation.ConversationInput,
+    ) -> dict[str, Any]:
+        """Обрабатывает фразу через общий локальный модуль без HTTP-сервиса."""
+        payload = self._assist_payload(user_input)
+        return await process_assist_payload(
+            text=payload["text"],
+            entities=payload["entities"],
+            areas=payload["areas"],
+            floors=payload["floors"],
+            conversation_id=payload.get("conversation_id"),
+            source_area_id=payload.get("source_area_id"),
+            source_area_name=payload.get("source_area_name"),
+            source_floor_id=payload.get("source_floor_id"),
+            source_floor_name=payload.get("source_floor_name"),
+            llm_api_key=self._llm_api_key(),
+        )
+
+    def _assist_payload(
+            self,
+            user_input: conversation.ConversationInput,
+    ) -> dict[str, Any]:
+        """Собирает общий payload для HTTP-сервиса и локального режима."""
+        return {
+            "text": user_input.text,
+            "language": user_input.language,
+            "conversation_id": user_input.conversation_id,
+            "entities": self._entities_payload(),
+            "areas": self._areas_payload(),
+            "floors": self._floors_payload(),
+            **self._source_payload(user_input),
+        }
 
     def _entities_payload(self) -> list[dict[str, Any]]:
         """Собирает exposed-сущности Home Assistant для локального сервиса."""
@@ -276,6 +313,17 @@ class HaAssistConversationEntity(
     def _area_floor_id(self, area: Any) -> str | None:
         """Возвращает этаж пространства, если он задан."""
         return getattr(area, "floor_id", None) if area is not None else None
+
+    def _llm_api_key(self) -> str | None:
+        """Возвращает API-ключ LLM из настроек интеграции."""
+        api_key = self._entry.options.get(
+            CONF_LLM_API_KEY,
+            self._entry.data.get(CONF_LLM_API_KEY, ""),
+        )
+        if not isinstance(api_key, str):
+            return None
+        api_key = api_key.strip()
+        return api_key or None
 
     async def _async_execute_service_call(
         self,

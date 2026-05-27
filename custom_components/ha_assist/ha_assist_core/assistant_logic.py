@@ -314,6 +314,7 @@ async def build_assist_result_with_llm(
         source_floor_id: str | None = None,
         source_floor_name: str | None = None,
         llm_messages: list[ChatMessage] | None = None,
+        llm_api_key: str | None = None,
 ) -> AssistLogicResult:
     result = build_assist_result(
         text,
@@ -335,7 +336,7 @@ async def build_assist_result_with_llm(
         },
     ]
     logger.info("LLM fallback requested for non-smart-home text: %s", text)
-    llm_response = await generate_llm_response(messages)
+    llm_response = await generate_llm_response(messages, api_key=llm_api_key)
     if llm_response is None:
         logger.info("LLM fallback did not return a response")
         return result

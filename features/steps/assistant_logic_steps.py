@@ -3,8 +3,8 @@ from typing import Any
 
 from behave import step
 
-from app.assistant_logic import build_assist_result, build_assist_result_with_llm
-from app.ha_parser import HaObject
+from ha_assist_core.assistant_logic import build_assist_result, build_assist_result_with_llm
+from ha_assist_core.ha_parser import HaObject
 
 
 def row_value(row: Any, key: str, default: str = "") -> str:
@@ -144,10 +144,14 @@ def step_when_user_says_docstring(context: Any) -> None:
 
 @step('пользователь говорит с LLM "{text}"')
 def step_when_user_says_with_llm(context: Any, text: str) -> None:
-    import app.assistant_logic as assistant_logic
+    import ha_assist_core.assistant_logic as assistant_logic
 
-    async def fake_generate_llm_response(messages: list[dict[str, str]]) -> str:
+    async def fake_generate_llm_response(
+            messages: list[dict[str, str]],
+            api_key: str | None = None,
+    ) -> str:
         assert messages == [{"role": "user", "content": text}]
+        assert api_key is None
         return context.llm_response
 
     original_generate_llm_response = assistant_logic.generate_llm_response

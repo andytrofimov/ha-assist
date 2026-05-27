@@ -1,4 +1,4 @@
-from app.number_parser import (
+from ha_assist_core.number_parser import (
     parse_brightness_percent,
     parse_delay_seconds,
     parse_duration_seconds,

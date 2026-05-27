@@ -5,7 +5,9 @@
         "title": "Dysha's Assistant",
         "data": {
           "name": "Name",
-          "assist_url": "Assist service URL"
+          "local": "Use local logic",
+          "assist_url": "Assist service URL",
+          "llm_api_key": "DeepSeek API key"
         }
       }
     },
@@ -14,6 +16,22 @@
     },
     "abort": {
       "already_configured": "This Assist service is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dysha's Assistant",
+        "data": {
+          "name": "Name",
+          "local": "Use local logic",
+          "assist_url": "Assist service URL",
+          "llm_api_key": "DeepSeek API key"
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "Invalid URL"
     }
   }
 }
