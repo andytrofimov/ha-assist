@@ -8,8 +8,7 @@
   "iot_class": "local_push",
   "requirements": [
     "natasha>=1.6.0",
-    "pydantic>=2.0.0",
-    "setuptools<81"
+    "pydantic>=2.0.0"
   ],
   "version": "0.1.0"
 }

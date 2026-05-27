@@ -7,17 +7,17 @@
 
   Предыстория:
     Дано доступны сущности:
-      | entity_id                             | name             | state  | aliases     | area_id   | area_name | floor_id | floor_name |
-      | light.svet_gostinnaia                 | Свет гостиная    | off    |             | gostinaia | Гостиная  | vtoroi   | Второй     |
-      | light.svet_kukhnia                    | Свет кухня       | off    |             | kukhnia   | Кухня     | vtoroi   | Второй     |
-      | light.svet_kabinet                    | Свет кабинет     | on     |             | kabinet   | Кабинет   | tretii   | Третий     |
-      | cover.0x54ef441000c8399e              | Штора спальня    | open   |             | spalnia   | Спальня   | vtoroi   | Второй     |
-      | cover.kontroller_vorot                | Ворота           | closed |             | ulitsa    | Улица     | ulitsa   | Улица      |
-      | scene.kino                | Сцена кино     | off    |             | gostinaia | Гостиная  | vtoroi   | Второй     |
-      | switch.krovat_massazh                 | Массаж           | off    |             | spalnia   | Спальня   | vtoroi   | Второй     |
+      | entity_id                 | name           | state  | aliases             | area_id   | area_name | floor_id | floor_name |
+      | light.svet_gostinnaia     | Свет гостиная  | off    |                     | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | light.svet_kukhnia        | Свет кухня     | off    |                     | kukhnia   | Кухня     | vtoroi   | Второй     |
+      | light.svet_kabinet        | Свет кабинет   | on     |                     | kabinet   | Кабинет   | tretii   | Третий     |
+      | cover.0x54ef441000c8399e  | Штора спальня  | open   |                     | spalnia   | Спальня   | vtoroi   | Второй     |
+      | cover.kontroller_vorot    | Ворота         | closed |                     | ulitsa    | Улица     | ulitsa   | Улица      |
+      | scene.kino                | Сцена кино     | off    |                     | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | switch.krovat_massazh     | Массаж         | off    |                     | spalnia   | Спальня   | vtoroi   | Второй     |
       | switch.ventilation        | Device ABC     | off    | Включить вентиляцию | gostinaia | Гостиная  | vtoroi   | Второй     |
       | button.restart_zigbee     | Restart Zigbee | off    | Перезапустить зигби |           |           |          |            |
-      | climate.air_conditioner_1             | Кондей спальня   | off    | кондиционер | spalnia   | Спальня   | vtoroi   | Второй     |
+      | climate.air_conditioner_1 | Кондей спальня | off    | кондиционер         | spalnia   | Спальня   | vtoroi   | Второй     |
     И доступны комнаты:
       | area_id   | name     | floor_id | aliases |
       | gostinaia | Гостиная | vtoroi   |         |
@@ -123,11 +123,11 @@
       | light  | turn_on | light.svet_gostinnaia | <brightness>   |
 
     Примеры:
-      | text                                     | brightness |
-      | включи свет в гостиной на 0 процентов   | 1          |
-      | включи свет в гостиной на 1 процент     | 1          |
-      | включи свет в гостиной на 100 процентов | 100        |
-      | включи свет в гостиной на 101 процент   | 100        |
+      | text                                           | brightness |
+      | включи свет в гостиной на 0 процентов          | 1          |
+      | включи свет в гостиной на 1 процент            | 1          |
+      | включи свет в гостиной на 100 процентов        | 100        |
+      | включи свет в гостиной на 101 процент          | 100        |
       | включи свет в гостиной на ноль процентов       | 1          |
       | включи свет в гостиной на один процент         | 1          |
       | включи свет в гостиной на пятнадцать процентов | 15         |
