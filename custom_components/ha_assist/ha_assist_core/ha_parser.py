@@ -1,0 +1,20 @@
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class HaObject(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    entity_id: str
+    name: str
+    state: str
+    aliases: str
+    area_id: str | None = None
+    area_name: str | None = None
+    floor_id: str | None = None
+    floor_name: str | None = None
+    unit_of_measurement: str | None = None
+    device_class: str | None = None
+    hvac_modes: list[str] | None = None
+    attributes: dict[str, Any] | None = None
