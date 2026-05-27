@@ -14,6 +14,9 @@ class AssistEntity(BaseModel):
     area_name: str | None = None
     floor_id: str | None = None
     floor_name: str | None = None
+    unit_of_measurement: str | None = None
+    device_class: str | None = None
+    hvac_modes: list[str] | None = None
 
 
 class AssistArea(BaseModel):

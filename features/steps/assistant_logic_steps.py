@@ -31,9 +31,20 @@ def entities_from_table(table: Any) -> list[HaObject]:
                 area_name=row_value(row, "area_name") or None,
                 floor_id=row_value(row, "floor_id") or None,
                 floor_name=row_value(row, "floor_name") or None,
+                unit_of_measurement=row_value(row, "unit_of_measurement") or None,
+                device_class=row_value(row, "device_class") or None,
+                hvac_modes=split_cell(row_value(row, "hvac_modes")),
             ),
         )
     return entities
+
+
+def split_cell(value: str) -> list[str]:
+    return [
+        item.strip()
+        for item in value.replace(",", "/").split("/")
+        if item.strip()
+    ]
 
 
 def dicts_from_table(table: Any) -> list[dict[str, Any]]:
@@ -141,6 +152,8 @@ def step_then_service_calls(context: Any) -> None:
         service_data: dict[str, Any] = {"entity_id": row_value(row, "entity_id")}
         if "brightness_pct" in context.table.headings and row_value(row, "brightness_pct"):
             service_data["brightness_pct"] = int(row_value(row, "brightness_pct"))
+        if "temperature" in context.table.headings and row_value(row, "temperature"):
+            service_data["temperature"] = int(row_value(row, "temperature"))
 
         service_call: dict[str, Any] = {
             "domain": row_value(row, "domain"),

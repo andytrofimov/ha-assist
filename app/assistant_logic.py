@@ -9,6 +9,12 @@ from pydantic import BaseModel, Field
 
 from app.ha_parser import HaObject
 from app.llm_client import ChatMessage, generate_llm_response
+from app.number_parser import (
+    parse_brightness_percent,
+    parse_delay_seconds,
+    parse_duration_seconds,
+    parse_temperature,
+)
 from app.text_normalizer import NormalizedText, get_text_normalizer
 
 logger = logging.getLogger(__name__)
@@ -43,7 +49,15 @@ ALL_WORDS = {"весь", "все", "всё", "вся", "всей", "всю"}
 # Слова, по которым пользовательская фраза связывается с доменами Home Assistant.
 DOMAIN_WORDS = {
     "light": {"свет", "лампа", "лампочка", "люстра", "подсветка", "торшер"},
-    "climate": {"кондиционер", "кондей", "климат"},
+    "climate": {
+        "кондиционер",
+        "кондей",
+        "климат",
+        "термостат",
+        "отопление",
+        "обогрев",
+        "подогрев",
+    },
     "cover": {"штора", "шторы", "занавеска", "ворота", "рольставни"},
     "switch": {"выключатель", "розетка", "массаж", "чайник", "комп", "компьютер"},
     "input_boolean": {"режим"},
@@ -176,6 +190,7 @@ def build_assist_result(
         action = detect_action(command)
         timing = parse_timing(command.original_text)
         brightness_pct = parse_brightness_percent(command.original_text)
+        target_temperature = parse_temperature(command.original_text)
         requested_domains = detect_requested_domains(command)
         location_context = detect_location_context(
             command=command,
@@ -232,6 +247,7 @@ def build_assist_result(
                 entity=match.entity,
                 action=action,
                 brightness_pct=brightness_pct,
+                target_temperature=target_temperature,
                 delay_seconds=timing.delay_seconds,
             )
             if service_call is None:
@@ -392,6 +408,8 @@ def detect_action(command: NormalizedText) -> str | None:
         return "close"
     if {"поставить", "установить"} & words and parse_brightness_percent(command.original_text):
         return "turn_on"
+    if {"поставить", "установить"} & words and parse_temperature(command.original_text):
+        return "set_temperature"
     return None
 
 
@@ -754,6 +772,9 @@ def score_entity_match(
         score_phrase_words(phrase_words, request_words, entity_domain)
         for phrase_words in entity_phrase_word_sets(entity)
     ]
+    climate_metadata_score = score_climate_metadata(entity, request_words, requested_domains)
+    if climate_metadata_score is not None:
+        phrase_scores.append(climate_metadata_score)
     phrase_scores = [score for score in phrase_scores if score is not None]
     if requested_domains and phrase_scores:
         return EntityMatch(entity=entity, score=max(phrase_scores))
@@ -787,6 +808,27 @@ def score_phrase_words(
 
     unmatched_specific_words = specific_words - request_words
     return 50 + (10 * len(matched_specific_words)) - len(unmatched_specific_words)
+
+
+def score_climate_metadata(
+        entity: HaObject,
+        request_words: set[str],
+        requested_domains: set[str],
+) -> int | None:
+    if entity.entity_id.split(".", maxsplit=1)[0] != "climate":
+        return None
+    if "climate" not in requested_domains:
+        return None
+
+    if request_words & {"отопление", "обогрев", "подогрев"}:
+        if "heat" in (entity.hvac_modes or []) or entity.state == "heat":
+            return 65
+        return None
+
+    if "термостат" in request_words and entity.device_class == "thermostat":
+        return 65
+
+    return None
 
 
 def broad_domain_matches(
@@ -918,6 +960,7 @@ def build_service_call(
     action: str,
     brightness_pct: int | None,
     delay_seconds: int | None,
+        target_temperature: int | None = None,
 ) -> dict[str, Any] | None:
     # Ответ сервиса остается простым JSON-планом, который выполняет интеграция HA.
     domain = entity.entity_id.split(".", maxsplit=1)[0]
@@ -928,6 +971,8 @@ def build_service_call(
     service_data: dict[str, Any] = {"entity_id": entity.entity_id}
     if domain == "light" and service == "turn_on" and brightness_pct is not None:
         service_data["brightness_pct"] = brightness_pct
+    if domain == "climate" and service == "set_temperature" and target_temperature is not None:
+        service_data["temperature"] = target_temperature
 
     service_call = {
         "domain": domain,
@@ -960,6 +1005,7 @@ def build_reverse_service_call(
         entity=entity,
         action=reverse_action,
         brightness_pct=None,
+        target_temperature=None,
         delay_seconds=delay_seconds,
     )
 
@@ -977,58 +1023,17 @@ def service_for_action(domain: str, action: str) -> str | None:
     if action == "close" and domain == "cover":
         return "close_cover"
 
+    if action == "set_temperature" and domain == "climate":
+        return "set_temperature"
+
     return None
-
-
-def parse_brightness_percent(text: str) -> int | None:
-    # Яркость ограничиваем диапазоном, который принимает Home Assistant.
-    match = re.search(r"\b(?:на\s+)?(\d{1,3})\s*%|\bна\s+(\d{1,3})\s+процент", text, re.I)
-    if match is None:
-        return None
-
-    value = int(next(group for group in match.groups() if group is not None))
-    return max(1, min(value, 100))
 
 
 def parse_timing(text: str) -> ParsedTiming:
     # "через" означает задержку, а "на 15 минут" означает временное действие.
-    delay_seconds = parse_seconds_after_marker(text, "через")
+    delay_seconds = parse_delay_seconds(text)
     duration_seconds = parse_duration_seconds(text)
     return ParsedTiming(delay_seconds=delay_seconds, duration_seconds=duration_seconds)
-
-
-def parse_seconds_after_marker(text: str, marker: str) -> int | None:
-    pattern = rf"\b{marker}\s+((?:пол)?\s*\d*|пол)?\s*(минут[уы]?|час(?:а|ов)?|полчаса)\b"
-    match = re.search(pattern, text, re.I)
-    if match is None:
-        return None
-    return duration_to_seconds(match.group(1), match.group(2))
-
-
-def parse_duration_seconds(text: str) -> int | None:
-    if re.search(r"\bчерез\b", text, re.I):
-        text = re.sub(r"\bчерез\b.*", "", text, flags=re.I)
-
-    match = re.search(r"\bна\s+(полчаса|\d+\s+минут[уы]?|\d+\s+час(?:а|ов)?)\b", text, re.I)
-    if match is None:
-        return None
-
-    duration = match.group(1)
-    duration_match = re.match(r"(\d+)?\s*(минут[уы]?|час(?:а|ов)?|полчаса)", duration, re.I)
-    if duration_match is None:
-        return None
-    return duration_to_seconds(duration_match.group(1), duration_match.group(2))
-
-
-def duration_to_seconds(amount_text: str | None, unit: str) -> int:
-    unit = unit.lower()
-    if unit == "полчаса" or (amount_text and amount_text.strip().lower() == "пол"):
-        return 30 * 60
-
-    amount = int(amount_text.strip()) if amount_text and amount_text.strip().isdigit() else 1
-    if unit.startswith("час"):
-        return amount * 60 * 60
-    return amount * 60
 
 
 def build_state_answer(entity: HaObject, command: NormalizedText | None = None) -> str:
@@ -1057,12 +1062,7 @@ def build_state_answer(entity: HaObject, command: NormalizedText | None = None) 
     if state in {"open", "closed"}:
         return "открыто" if state == "open" else "закрыто"
 
-    if domain == "sensor" and looks_like_percent_sensor(entity):
+    if domain == "sensor" and entity.unit_of_measurement == "%":
         return f"{state}%"
 
     return state
-
-
-def looks_like_percent_sensor(entity: HaObject) -> bool:
-    words = entity_search_words(entity)
-    return bool(words & {"потеря", "пакет", "пакетов", "процент", "процентов"})

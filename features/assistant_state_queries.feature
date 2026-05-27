@@ -7,13 +7,13 @@
 
   Предыстория:
     Дано доступны сущности:
-      | entity_id                                | name                    | state | aliases         | area_id   | area_name | floor_id | floor_name |
-      | sensor.0xa4c13804c362ffff_temperature    | Вода в бассейне         | 23.1  |                 | bassein   | Бассейн   | pervyi   | Первый     |
-      | sensor.0xa4c138e5b424f709_temperature    | Температура первый этаж | 22.2  |                 | bassein   | Бассейн   | pervyi   | Первый     |
-      | sensor.packet_loss                       | 77.88.8.1 Packet loss   | 0.0   | потеря пакетов  |           |           |          |            |
-      | media_player.mitv_moeu1                  | media_player.mitv_moeu1 | on    | Телек/телевизор | gostinaia | Гостиная  | vtoroi   | Второй     |
-      | binary_sensor.0x00158d0007075bb6_contact | Дверь кабинет           | on    |                 | kabinet   | Кабинет   | tretii   | Третий     |
-      | input_boolean.rezhim_sna                 | Режим сна               | on    |                 |           |           |          |            |
+      | entity_id                                | name                    | state | aliases         | area_id   | area_name | floor_id | floor_name | unit_of_measurement |
+      | sensor.0xa4c13804c362ffff_temperature    | Вода в бассейне         | 23.1  |                 | bassein   | Бассейн   | pervyi   | Первый     | °C                  |
+      | sensor.0xa4c138e5b424f709_temperature    | Температура первый этаж | 22.2  |                 | bassein   | Бассейн   | pervyi   | Первый     | °C                  |
+      | sensor.packet_loss                       | 77.88.8.1 Packet loss   | 0.0   | потеря пакетов  |           |           |          |            | %                   |
+      | media_player.mitv_moeu1                  | media_player.mitv_moeu1 | on    | Телек/телевизор | gostinaia | Гостиная  | vtoroi   | Второй     |                     |
+      | binary_sensor.0x00158d0007075bb6_contact | Дверь кабинет           | on    |                 | kabinet   | Кабинет   | tretii   | Третий     |                     |
+      | input_boolean.rezhim_sna                 | Режим сна               | on    |                 |           |           |          |            |                     |
     И доступны комнаты:
       | area_id   | name     | floor_id | aliases |
       | gostinaia | Гостиная | vtoroi   |         |

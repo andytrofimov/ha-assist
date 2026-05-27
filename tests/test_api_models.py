@@ -15,6 +15,9 @@ def test_assist_request_accepts_areas_and_floors() -> None:
                     "area_name": "Кухня",
                     "floor_id": "floor_1",
                     "floor_name": "Первый этаж",
+                    "unit_of_measurement": "%",
+                    "device_class": "thermostat",
+                    "hvac_modes": ["heat", "off"],
                 },
             ],
             "areas": [
@@ -37,5 +40,8 @@ def test_assist_request_accepts_areas_and_floors() -> None:
     )
 
     assert request.entities[0].floor_name == "Первый этаж"
+    assert request.entities[0].unit_of_measurement == "%"
+    assert request.entities[0].device_class == "thermostat"
+    assert request.entities[0].hvac_modes == ["heat", "off"]
     assert request.areas[0].name == "Кухня"
     assert request.floors[0].floor_id == "floor_1"

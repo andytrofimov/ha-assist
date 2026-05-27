@@ -11,7 +11,12 @@ from aiohttp import ClientError, ClientResponseError
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_should_expose
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_FRIENDLY_NAME, CONF_NAME, MATCH_ALL
+from homeassistant.const import (
+    ATTR_FRIENDLY_NAME,
+    ATTR_UNIT_OF_MEASUREMENT,
+    CONF_NAME,
+    MATCH_ALL,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
     area_registry as ar,
@@ -168,6 +173,9 @@ class HaAssistConversationEntity(
                     "area_name": self._entry_name(area),
                     "floor_id": floor_id,
                     "floor_name": self._entry_name(floor),
+                    "unit_of_measurement": state.attributes.get(ATTR_UNIT_OF_MEASUREMENT),
+                    "device_class": state.attributes.get("device_class"),
+                    "hvac_modes": state.attributes.get("hvac_modes") or None,
                 }
             )
 
@@ -289,6 +297,16 @@ class HaAssistConversationEntity(
         user_input: conversation.ConversationInput,
     ) -> None:
         """Выполняет обычный сервисный вызов через Assist intent API."""
+        if service_call["service"] == "set_temperature":
+            await self.hass.services.async_call(
+                service_call["domain"],
+                service_call["service"],
+                service_call.get("service_data") or {},
+                blocking=True,
+                context=user_input.context,
+            )
+            return
+
         intent_type, slots = self._assist_intent_payload(service_call)
         await intent.async_handle(
             self.hass,
