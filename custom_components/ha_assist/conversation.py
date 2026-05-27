@@ -298,7 +298,9 @@ class HaAssistConversationEntity(
         user_input: conversation.ConversationInput,
     ) -> None:
         """Выполняет обычный сервисный вызов через Assist intent API."""
-        if service_call["service"] == "set_temperature":
+        if service_call["service"] == "set_temperature" or (
+                service_call["domain"] == "todo" and service_call["service"] == "add_item"
+        ):
             await self.hass.services.async_call(
                 service_call["domain"],
                 service_call["service"],

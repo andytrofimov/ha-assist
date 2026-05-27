@@ -178,6 +178,8 @@ def step_then_service_calls(context: Any) -> None:
             service_data["brightness_pct"] = int(row_value(row, "brightness_pct"))
         if "temperature" in context.table.headings and row_value(row, "temperature"):
             service_data["temperature"] = int(row_value(row, "temperature"))
+        if "item" in context.table.headings and row_value(row, "item"):
+            service_data["item"] = row_value(row, "item")
 
         service_call: dict[str, Any] = {
             "domain": row_value(row, "domain"),

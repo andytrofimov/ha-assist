@@ -103,6 +103,8 @@ GENERIC_WORDS = {
     "включи",
     "выключить",
     "выключи",
+    "добавить",
+    "добавь",
     "открыть",
     "открой",
     "закрыть",
@@ -126,6 +128,7 @@ TURN_ON_WORDS = {"включить", "активировать", "запусти
 TURN_OFF_WORDS = {"выключить", "отключить"}
 OPEN_WORDS = {"открыть"}
 CLOSE_WORDS = {"закрыть"}
+ADD_TODO_WORDS = {"добавить"}
 STATE_QUERY_WORDS = {
     "что",
     "какой",
@@ -233,10 +236,14 @@ def build_assist_result(
             return llm_fallback_result()
 
         if action is None and matches:
-            if all(entity_domain(match.entity) in STATE_ONLY_DOMAINS for match in matches):
+            if all(entity_domain(match.entity) == "todo" for match in matches) and any(
+                    parse_todo_item(command, match.entity) for match in matches
+            ):
+                action = "add_todo"
+            elif all(entity_domain(match.entity) in STATE_ONLY_DOMAINS for match in matches):
                 state_answers.extend(build_state_answer(match.entity, command) for match in matches)
                 continue
-            if all(entity_domain(match.entity) == "button" for match in matches):
+            elif all(entity_domain(match.entity) == "button" for match in matches):
                 action = "press"
             else:
                 action = "turn_on" if all(is_turnable(match.entity) for match in matches) else None
@@ -266,6 +273,7 @@ def build_assist_result(
                 action=action,
                 brightness_pct=brightness_pct,
                 target_temperature=target_temperature,
+                todo_item=parse_todo_item(command, match.entity) if action == "add_todo" else None,
                 delay_seconds=timing.delay_seconds,
             )
             if service_call is None:
@@ -428,6 +436,8 @@ def detect_action(command: NormalizedText) -> str | None:
         return "open"
     if words & CLOSE_WORDS:
         return "close"
+    if words & ADD_TODO_WORDS:
+        return "add_todo"
     if {"поставить", "установить"} & words and parse_brightness_percent(command.original_text):
         return "turn_on"
     if {"поставить", "установить"} & words and parse_temperature(command.original_text):
@@ -511,6 +521,8 @@ def find_entity_matches(
     if best_score >= 100:
         # При точном совпадении не подтягиваем похожие entity, кроме явных списков через "и".
         allow_related_matches = "и" in command.normal_forms
+        if not allow_related_matches:
+            return [match for match in scored_matches if match.score == best_score]
         exact_domains = {
             match.entity.entity_id.split(".", maxsplit=1)[0]
             for match in scored_matches
@@ -519,11 +531,11 @@ def find_entity_matches(
         return [
             match
             for match in scored_matches
-            if match.score >= 100
+            if match.score == best_score
             or (
                 allow_related_matches
                 and
-                match.score >= 50
+                50 <= match.score < 100
                 and match.entity.entity_id.split(".", maxsplit=1)[0] in exact_domains
             )
         ]
@@ -1050,12 +1062,27 @@ def is_turnable(entity: HaObject) -> bool:
     return domain in TURNABLE_DOMAINS
 
 
+def parse_todo_item(command: NormalizedText, entity: HaObject) -> str | None:
+    if entity_domain(entity) != "todo":
+        return None
+
+    for phrase in sorted(raw_entity_phrases(entity), key=len, reverse=True):
+        match = re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", command.original_text, re.I)
+        if match is None:
+            continue
+        item = command.original_text[match.end():].strip(" .,!?")
+        return item or None
+
+    return None
+
+
 def build_service_call(
     entity: HaObject,
     action: str,
     brightness_pct: int | None,
     delay_seconds: int | None,
         target_temperature: int | None = None,
+        todo_item: str | None = None,
 ) -> dict[str, Any] | None:
     # Ответ сервиса остается простым JSON-планом, который выполняет интеграция HA.
     domain = entity.entity_id.split(".", maxsplit=1)[0]
@@ -1068,6 +1095,10 @@ def build_service_call(
         service_data["brightness_pct"] = brightness_pct
     if domain == "climate" and service == "set_temperature" and target_temperature is not None:
         service_data["temperature"] = target_temperature
+    if domain == "todo" and service == "add_item" and todo_item is None:
+        return None
+    if domain == "todo" and service == "add_item" and todo_item is not None:
+        service_data["item"] = todo_item
 
     service_call = {
         "domain": domain,
@@ -1101,6 +1132,7 @@ def build_reverse_service_call(
         action=reverse_action,
         brightness_pct=None,
         target_temperature=None,
+        todo_item=None,
         delay_seconds=delay_seconds,
     )
 
@@ -1123,6 +1155,9 @@ def service_for_action(domain: str, action: str) -> str | None:
 
     if action == "press" and domain == "button":
         return "press"
+
+    if action == "add_todo" and domain == "todo":
+        return "add_item"
 
     return None
 

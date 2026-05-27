@@ -46,7 +46,7 @@ async def process_assist_request(request: AssistRequest) -> AssistResponse:
         llm_messages=build_llm_messages(request.conversation_id, request.text),
     )
     response = AssistResponse(
-        response=result.response,
+        response=add_tts_trailing_period(result.response),
         service_calls=result.service_calls,
     )
     remember_exchange(
@@ -60,6 +60,13 @@ async def process_assist_request(request: AssistRequest) -> AssistResponse:
         response.service_calls,
     )
     return response
+
+
+def add_tts_trailing_period(text: str) -> str:
+    stripped_text = text.rstrip()
+    if not stripped_text or stripped_text.endswith("."):
+        return stripped_text
+    return f"{stripped_text}."
 
 
 def save_assist_request_snapshot(request: AssistRequest) -> None:
