@@ -179,6 +179,11 @@ def step_then_response_equals(context: Any, text: str) -> None:
     assert context.result.response == text, context.result.response
 
 
+@step("ответ ассистента пустой")
+def step_then_response_empty(context: Any) -> None:
+    assert context.result.response == "", context.result.response
+
+
 @step("ассистент просит LLM fallback")
 def step_then_fallback_to_llm(context: Any) -> None:
     assert context.result.fallback_to_llm

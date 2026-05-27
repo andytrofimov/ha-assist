@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 # Короткие ответы для успешно распознанных команд умного дома.
 OK_RESPONSES = ("окей", "готово", "сделано")
-ERROR_NOT_SMART_HOME = "Не поняла, как это связано с умным домом."
 ERROR_ENTITY_NOT_FOUND = "Не нашла такое устройство."
 ERROR_ACTION_NOT_FOUND = "Не поняла, что сделать."
 ERROR_AREA_NOT_FOUND = "Не нашла такую комнату."
@@ -121,7 +120,7 @@ STATE_QUERY_WORDS = {
 
 
 class AssistLogicResult(BaseModel):
-    response: str
+    response: str = ""
     service_calls: list[dict[str, Any]] = Field(default_factory=list)
     fallback_to_llm: bool = False
 
@@ -205,10 +204,7 @@ def build_assist_result(
         if is_state_query(command):
             if not matches:
                 if not found_smart_home_signal:
-                    return AssistLogicResult(
-                        response=ERROR_NOT_SMART_HOME,
-                        fallback_to_llm=True,
-                    )
+                    return llm_fallback_result()
                 return AssistLogicResult(response=ERROR_ENTITY_NOT_FOUND)
             state_answers.extend(build_state_answer(match.entity, command) for match in matches)
             continue
@@ -219,10 +215,7 @@ def build_assist_result(
         if action is None:
             if found_smart_home_signal:
                 return AssistLogicResult(response=ERROR_ACTION_NOT_FOUND)
-            return AssistLogicResult(
-                response=ERROR_NOT_SMART_HOME,
-                fallback_to_llm=True,
-            )
+            return llm_fallback_result()
 
         if not matches:
             if has_unknown_location(command, ha_objects, areas or [], floors or []):
@@ -262,10 +255,11 @@ def build_assist_result(
     if state_answers:
         return AssistLogicResult(response="; ".join(state_answers))
 
-    return AssistLogicResult(
-        response=ERROR_NOT_SMART_HOME,
-        fallback_to_llm=True,
-    )
+    return llm_fallback_result()
+
+
+def llm_fallback_result() -> AssistLogicResult:
+    return AssistLogicResult(fallback_to_llm=True)
 
 
 async def build_assist_result_with_llm(
