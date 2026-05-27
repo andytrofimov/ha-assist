@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import FastAPI
@@ -5,6 +6,7 @@ from fastapi import FastAPI
 from app.api_models import AssistRequest, AssistResponse
 from app.assistant_logic import build_assist_result_with_llm
 from app.conversation_memory import build_llm_messages, remember_exchange
+from app.entity_snapshot import save_entities_snapshot
 from app.ha_parser import HaObject
 
 logging.basicConfig(level=logging.INFO)
@@ -21,6 +23,8 @@ async def health() -> dict[str, str]:
 @app.post("/assist")
 async def process_assist_request(request: AssistRequest) -> AssistResponse:
     logger.info("Assist request text: %s", request.text)
+    await asyncio.to_thread(save_entities_snapshot, request.entities)
+    logger.info("Saved latest entities snapshot; count=%s", len(request.entities))
 
     ha_objects = [
         HaObject(

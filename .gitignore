@@ -2,3 +2,5 @@
 __pycache__/
 .pytest_cache/
 deepseek_api_key.txt
+last_entities.json
+last_entities.yaml
