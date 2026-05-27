@@ -113,6 +113,7 @@ class HaAssistConversationEntity(
                     "entities": self._entities_payload(),
                     "areas": self._areas_payload(),
                     "floors": self._floors_payload(),
+                    **self._source_payload(user_input),
                 },
             )
             http_response.raise_for_status()
@@ -197,6 +198,32 @@ class HaAssistConversationEntity(
             }
             for floor in floor_registry.async_list_floors()
         ]
+
+    def _source_payload(
+        self,
+        user_input: conversation.ConversationInput,
+    ) -> dict[str, Any]:
+        """Определяет комнату устройства, с которого пришел голосовой запрос."""
+        device_id = getattr(user_input, "device_id", None)
+        if device_id is None:
+            return {}
+
+        device_registry = dr.async_get(self.hass)
+        area_registry = ar.async_get(self.hass)
+        floor_registry = fr.async_get(self.hass)
+        device = device_registry.async_get(device_id)
+        area_id = getattr(device, "area_id", None) if device is not None else None
+        area = area_registry.async_get_area(area_id) if area_id else None
+        floor_id = self._area_floor_id(area)
+        floor = floor_registry.async_get_floor(floor_id) if floor_id else None
+
+        return {
+            "source_device_id": device_id,
+            "source_area_id": area_id,
+            "source_area_name": self._entry_name(area),
+            "source_floor_id": floor_id,
+            "source_floor_name": self._entry_name(floor),
+        }
 
     def _entity_area_id(
         self,

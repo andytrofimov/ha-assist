@@ -18,6 +18,8 @@ OK_RESPONSES = ("окей", "готово", "сделано")
 ERROR_NOT_SMART_HOME = "Не поняла, как это связано с умным домом."
 ERROR_ENTITY_NOT_FOUND = "Не нашла такое устройство."
 ERROR_ACTION_NOT_FOUND = "Не поняла, что сделать."
+ERROR_AREA_NOT_FOUND = "Не нашла такую комнату."
+ERROR_AMBIGUOUS_AREA = "Уточните комнату."
 
 # Домены, которые поддерживают стандартные Home Assistant команды turn_on/turn_off.
 TURNABLE_DOMAINS = {
@@ -36,6 +38,8 @@ TURNABLE_DOMAINS = {
 }
 
 STATE_ONLY_DOMAINS = {"binary_sensor", "sensor"}
+DEVICE_WORDS = {"устройство", "устройства", "прибор", "приборы"}
+ALL_WORDS = {"весь", "все", "всё", "вся", "всей", "всю"}
 
 # Слова, по которым пользовательская фраза связывается с доменами Home Assistant.
 DOMAIN_WORDS = {
@@ -129,9 +133,33 @@ class ParsedTiming:
     duration_seconds: int | None = None
 
 
+@dataclass(frozen=True)
+class LocationContext:
+    area_ids: set[str]
+    floor_ids: set[str]
+    explicit_area: bool = False
+    explicit_floor: bool = False
+    source_area_id: str | None = None
+    source_floor_id: str | None = None
+
+    @property
+    def has_explicit_location(self) -> bool:
+        return self.explicit_area or self.explicit_floor
+
+    @property
+    def has_location(self) -> bool:
+        return bool(self.area_ids or self.floor_ids)
+
+
 def build_assist_result(
     text: str,
     ha_objects: list[HaObject],
+    areas: list[Any] | None = None,
+    floors: list[Any] | None = None,
+    source_area_id: str | None = None,
+    source_area_name: str | None = None,
+    source_floor_id: str | None = None,
+    source_floor_name: str | None = None,
 ) -> AssistLogicResult:
     normalized_request = normalize(text)
     command_parts = split_compound_commands(normalized_request.original_text)
@@ -145,13 +173,28 @@ def build_assist_result(
         timing = parse_timing(command.original_text)
         brightness_pct = parse_brightness_percent(command.original_text)
         requested_domains = detect_requested_domains(command)
-        matches = find_entity_matches(command, ha_objects)
+        location_context = detect_location_context(
+            command=command,
+            ha_objects=ha_objects,
+            areas=areas or [],
+            floors=floors or [],
+            source_area_id=source_area_id,
+            source_area_name=source_area_name,
+            source_floor_id=source_floor_id,
+            source_floor_name=source_floor_name,
+        )
+        matches = find_entity_matches(
+            command,
+            ha_objects,
+            location_context=location_context,
+        )
 
         found_smart_home_signal = (
             found_smart_home_signal
             or action is not None
             or bool(matches)
             or bool(requested_domains)
+            or location_context.has_location
         )
 
         if is_state_query(command):
@@ -177,7 +220,12 @@ def build_assist_result(
             )
 
         if not matches:
+            if has_unknown_location(command, areas or [], floors or []):
+                return AssistLogicResult(response=ERROR_AREA_NOT_FOUND)
             return AssistLogicResult(response=ERROR_ENTITY_NOT_FOUND)
+
+        if is_ambiguous_location(matches, location_context):
+            return AssistLogicResult(response=ERROR_AMBIGUOUS_AREA)
 
         for match in matches:
             service_call = build_service_call(
@@ -216,9 +264,24 @@ def build_assist_result(
 async def build_assist_result_with_llm(
     text: str,
     ha_objects: list[HaObject],
+    areas: list[Any] | None = None,
+    floors: list[Any] | None = None,
+    source_area_id: str | None = None,
+    source_area_name: str | None = None,
+    source_floor_id: str | None = None,
+    source_floor_name: str | None = None,
     llm_messages: list[ChatMessage] | None = None,
 ) -> AssistLogicResult:
-    result = build_assist_result(text, ha_objects)
+    result = build_assist_result(
+        text,
+        ha_objects,
+        areas=areas,
+        floors=floors,
+        source_area_id=source_area_id,
+        source_area_name=source_area_name,
+        source_floor_id=source_floor_id,
+        source_floor_name=source_floor_name,
+    )
     if not result.fallback_to_llm:
         return result
 
@@ -317,19 +380,40 @@ def is_state_query(command: NormalizedText) -> bool:
 def find_entity_matches(
     command: NormalizedText,
     ha_objects: list[HaObject],
+    location_context: LocationContext | None = None,
 ) -> list[EntityMatch]:
-    request_words = set(command.normal_forms)
+    request_words = {word for word in command.normal_forms if not word.isdigit()}
     requested_domains = detect_requested_domains(command)
+    search_objects = filter_entities_by_location(ha_objects, location_context)
     # Сначала ищем точные и частичные совпадения по имени и alias.
     scored_matches = [
         match
-        for entity in ha_objects
+        for entity in search_objects
         if (match := score_entity_match(entity, command, request_words, requested_domains))
         is not None
     ]
+    if (
+        scored_matches
+        and location_context
+        and location_context.has_location
+        and not location_context.has_explicit_location
+        and requested_domains
+    ):
+        source_matches = [
+            match
+            for match in scored_matches
+            if entity_in_location(match.entity, location_context)
+        ]
+        if source_matches:
+            scored_matches = source_matches
 
     if not scored_matches:
-        broad_matches = broad_domain_matches(command, ha_objects, requested_domains)
+        broad_matches = broad_domain_matches(
+            command,
+            search_objects,
+            requested_domains,
+            location_context,
+        )
         if broad_matches:
             return broad_matches
         return []
@@ -356,6 +440,209 @@ def find_entity_matches(
         ]
 
     return [match for match in scored_matches if match.score == best_score]
+
+
+def detect_location_context(
+    command: NormalizedText,
+    ha_objects: list[HaObject],
+    areas: list[Any],
+    floors: list[Any],
+    source_area_id: str | None,
+    source_area_name: str | None,
+    source_floor_id: str | None,
+    source_floor_name: str | None,
+) -> LocationContext:
+    area_ids = matched_location_ids(command, areas, "area_id")
+    floor_ids = matched_location_ids(command, floors, "floor_id")
+
+    explicit_area = bool(area_ids)
+    explicit_floor = bool(floor_ids)
+    source_area = source_area_id or id_by_name(source_area_name, areas, "area_id")
+    source_floor = source_floor_id or id_by_name(source_floor_name, floors, "floor_id")
+
+    if not area_ids and not floor_ids:
+        if source_area:
+            area_ids.add(source_area)
+        elif source_floor:
+            floor_ids.add(source_floor)
+
+    if area_ids and not floor_ids:
+        floor_ids.update(
+            str(area_floor_id)
+            for area in areas
+            if (area_id := get_value(area, "area_id")) in area_ids
+            and (area_floor_id := get_value(area, "floor_id"))
+        )
+
+    if floor_ids and not area_ids:
+        area_ids.update(
+            str(area_id)
+            for area in areas
+            if (area_id := get_value(area, "area_id"))
+            and get_value(area, "floor_id") in floor_ids
+        )
+
+    # Если справочники не пришли, используем привязку самих entity.
+    if floor_ids and not area_ids:
+        area_ids.update(
+            str(entity.area_id)
+            for entity in ha_objects
+            if entity.area_id and entity.floor_id in floor_ids
+        )
+
+    return LocationContext(
+        area_ids=area_ids,
+        floor_ids=floor_ids,
+        explicit_area=explicit_area,
+        explicit_floor=explicit_floor,
+        source_area_id=source_area,
+        source_floor_id=source_floor,
+    )
+
+
+def matched_location_ids(
+    command: NormalizedText,
+    entries: list[Any],
+    id_field: str,
+) -> set[str]:
+    matches: set[str] = set()
+    request_words = {word for word in command.normal_forms if not word.isdigit()}
+    for entry in entries:
+        entry_id = get_value(entry, id_field)
+        if not entry_id:
+            continue
+        for phrase in location_entry_phrases(entry):
+            normalized = normalize(phrase)
+            words = set(normalized.normal_forms) - GENERIC_WORDS
+            if normalized.normalized_text in command.normalized_text or (
+                words and words <= request_words
+            ):
+                matches.add(str(entry_id))
+                break
+    return matches
+
+
+def location_entry_phrases(entry: Any) -> list[str]:
+    phrases = [
+        str(value)
+        for key in ("name", "area_id", "floor_id")
+        if (value := get_value(entry, key))
+    ]
+    phrases.extend(split_aliases(str(get_value(entry, "aliases") or "")))
+    return [phrase for phrase in phrases if phrase.strip()]
+
+
+def id_by_name(name: str | None, entries: list[Any], id_field: str) -> str | None:
+    if not name:
+        return None
+    normalized_name = normalize(name).normalized_text
+    for entry in entries:
+        entry_id = get_value(entry, id_field)
+        if not entry_id:
+            continue
+        if any(
+            normalize(phrase).normalized_text == normalized_name
+            for phrase in location_entry_phrases(entry)
+        ):
+            return str(entry_id)
+    return None
+
+
+def get_value(entry: Any, key: str) -> Any:
+    if isinstance(entry, dict):
+        return entry.get(key)
+    return getattr(entry, key, None)
+
+
+def filter_entities_by_location(
+    ha_objects: list[HaObject],
+    location_context: LocationContext | None,
+) -> list[HaObject]:
+    if (
+        not location_context
+        or not location_context.has_location
+        or not location_context.has_explicit_location
+    ):
+        return ha_objects
+
+    return [
+        entity
+        for entity in ha_objects
+        if entity_in_location(entity, location_context)
+    ]
+
+
+def entity_in_location(entity: HaObject, location_context: LocationContext) -> bool:
+    if location_context.explicit_floor and not location_context.explicit_area:
+        return bool(entity.floor_id and entity.floor_id in location_context.floor_ids)
+    if location_context.area_ids:
+        return bool(entity.area_id and entity.area_id in location_context.area_ids)
+    return bool(entity.floor_id and entity.floor_id in location_context.floor_ids)
+
+
+def has_unknown_location(
+    command: NormalizedText,
+    areas: list[Any],
+    floors: list[Any],
+) -> bool:
+    if not re.search(r"\b(?:в|во|на)\s+[A-Za-zА-Яа-яЁё]", command.original_text, re.I):
+        return False
+    context = detect_location_context(
+        command=command,
+        ha_objects=[],
+        areas=areas,
+        floors=floors,
+        source_area_id=None,
+        source_area_name=None,
+        source_floor_id=None,
+        source_floor_name=None,
+    )
+    if context.has_explicit_location:
+        return False
+    known_location_words = all_location_words(areas, floors)
+    command_words = set(command.normal_forms)
+    non_generic_words = command_words - GENERIC_WORDS
+    domain_words = set().union(*DOMAIN_WORDS.values())
+    return bool(non_generic_words - domain_words - known_location_words)
+
+
+def is_ambiguous_location(
+    matches: list[EntityMatch],
+    location_context: LocationContext,
+) -> bool:
+    if location_context.has_location:
+        return False
+    area_ids = {match.entity.area_id for match in matches if match.entity.area_id}
+    return len(area_ids) > 1
+
+
+def is_all_devices_request(
+    request_words: set[str],
+    location_context: LocationContext | None,
+) -> bool:
+    return bool(
+        request_words & DEVICE_WORDS
+        and request_words & ALL_WORDS
+        and location_context
+        and location_context.has_location
+    )
+
+
+def location_words(ha_objects: list[HaObject]) -> set[str]:
+    words: set[str] = set()
+    for entity in ha_objects:
+        for value in (entity.area_name, entity.floor_name, entity.area_id, entity.floor_id):
+            if value:
+                words.update(normalize(value).normal_forms)
+    return words
+
+
+def all_location_words(areas: list[Any], floors: list[Any]) -> set[str]:
+    words: set[str] = set()
+    for entry in [*areas, *floors]:
+        for phrase in location_entry_phrases(entry):
+            words.update(normalize(phrase).normal_forms)
+    return words
 
 
 def score_entity_match(
@@ -412,15 +699,44 @@ def broad_domain_matches(
     command: NormalizedText,
     ha_objects: list[HaObject],
     requested_domains: set[str],
+    location_context: LocationContext | None = None,
 ) -> list[EntityMatch]:
-    # Команды вида "включи свет" без комнаты применяются ко всем entity домена.
-    if not requested_domains:
-        return []
+    if location_context and location_context.has_location:
+        ha_objects = [
+            entity
+            for entity in ha_objects
+            if entity_in_location(entity, location_context)
+        ]
 
-    request_words = set(command.normal_forms)
+    # Широкие команды без комнаты ниже отсекаются как неоднозначные, если есть разные комнаты.
+    request_words = {word for word in command.normal_forms if not word.isdigit()}
+    if not requested_domains:
+        if not is_all_devices_request(request_words, location_context):
+            return []
+        return [
+            EntityMatch(entity=entity, score=30)
+            for entity in ha_objects
+            if is_turnable(entity) and entity.entity_id.split(".", maxsplit=1)[0] != "scene"
+        ]
+
+    if is_all_devices_request(request_words, location_context):
+        return [
+            EntityMatch(entity=entity, score=30)
+            for entity in ha_objects
+            if is_turnable(entity) and entity.entity_id.split(".", maxsplit=1)[0] != "scene"
+        ]
+
+    if requested_domains == {"light"} and (request_words & ALL_WORDS):
+        return [
+            EntityMatch(entity=entity, score=30)
+            for entity in ha_objects
+            if entity.entity_id.split(".", maxsplit=1)[0] == "light"
+        ]
+
     domain_generic_words = set(GENERIC_WORDS)
     for domain in requested_domains:
         domain_generic_words.update(DOMAIN_WORDS.get(domain, set()))
+    domain_generic_words.update(location_words(ha_objects))
 
     if request_words - domain_generic_words:
         return []

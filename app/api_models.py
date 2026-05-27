@@ -10,6 +10,10 @@ class AssistEntity(BaseModel):
     name: str
     state: str
     aliases: str = ""
+    area_id: str | None = None
+    area_name: str | None = None
+    floor_id: str | None = None
+    floor_name: str | None = None
 
 
 class AssistArea(BaseModel):
@@ -18,6 +22,7 @@ class AssistArea(BaseModel):
     area_id: str | None = None
     name: str
     floor_id: str | None = None
+    aliases: str = ""
 
 
 class AssistFloor(BaseModel):
@@ -37,6 +42,11 @@ class AssistRequest(BaseModel):
     entities: list[AssistEntity]
     areas: list[AssistArea] = Field(default_factory=list)
     floors: list[AssistFloor] = Field(default_factory=list)
+    source_device_id: str | None = None
+    source_area_id: str | None = None
+    source_area_name: str | None = None
+    source_floor_id: str | None = None
+    source_floor_name: str | None = None
 
 
 class AssistResponse(BaseModel):

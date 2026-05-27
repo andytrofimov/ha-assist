@@ -1,16 +1,20 @@
 import asyncio
+import json
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 
 from app.api_models import AssistRequest, AssistResponse
 from app.assistant_logic import build_assist_result_with_llm
 from app.conversation_memory import build_llm_messages, remember_exchange
-from app.entity_snapshot import save_entities_snapshot
 from app.ha_parser import HaObject
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Последний запрос нужен только для локальной диагностики.
+LAST_ASSIST_REQUEST_FILE = Path(__file__).resolve().parent.parent / "last_assist_request.json"
 
 app = FastAPI()
 
@@ -23,21 +27,22 @@ async def health() -> dict[str, str]:
 @app.post("/assist")
 async def process_assist_request(request: AssistRequest) -> AssistResponse:
     logger.info("Assist request text: %s", request.text)
-    await asyncio.to_thread(save_entities_snapshot, request.entities)
-    logger.info("Saved latest entities snapshot; count=%s", len(request.entities))
+    await asyncio.to_thread(save_assist_request_snapshot, request)
+    logger.info("Saved latest assist request snapshot")
 
     ha_objects = [
-        HaObject(
-            entity_id=entity.entity_id,
-            name=entity.name,
-            state=entity.state,
-            aliases=entity.aliases,
-        )
+        HaObject.model_validate(entity.model_dump())
         for entity in request.entities
     ]
     result = await build_assist_result_with_llm(
         text=request.text,
         ha_objects=ha_objects,
+        areas=[area.model_dump() for area in request.areas],
+        floors=[floor.model_dump() for floor in request.floors],
+        source_area_id=request.source_area_id,
+        source_area_name=request.source_area_name,
+        source_floor_id=request.source_floor_id,
+        source_floor_name=request.source_floor_name,
         llm_messages=build_llm_messages(request.conversation_id, request.text),
     )
     response = AssistResponse(
@@ -55,3 +60,15 @@ async def process_assist_request(request: AssistRequest) -> AssistResponse:
         response.service_calls,
     )
     return response
+
+
+def save_assist_request_snapshot(request: AssistRequest) -> None:
+    LAST_ASSIST_REQUEST_FILE.write_text(
+        json.dumps(
+            request.model_dump(mode="json", exclude_none=True),
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )

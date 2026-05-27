@@ -36,6 +36,6 @@ def test_assist_request_accepts_areas_and_floors() -> None:
         },
     )
 
-    assert request.entities[0].model_extra["floor_name"] == "Первый этаж"
+    assert request.entities[0].floor_name == "Первый этаж"
     assert request.areas[0].name == "Кухня"
     assert request.floors[0].floor_id == "floor_1"

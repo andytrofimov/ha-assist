@@ -20,8 +20,8 @@ Set-Content -Encoding UTF8 deepseek_api_key.txt "..."
 The fallback sends the recent conversation history for the same `conversation_id`,
 so follow-up questions keep context while the service process is running.
 
-Each `/assist` request also saves the latest exposed entities payload to
-`last_entities.json` in the repository root for local debugging.
+Each `/assist` request also saves the full latest request payload to
+`last_assist_request.json` in the repository root for local debugging.
 
 ## HACS installation
 
