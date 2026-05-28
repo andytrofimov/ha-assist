@@ -12,6 +12,7 @@
       | light.svet_gostinnaia                  | Свет гостиная   | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
       | light.svet_kukhnia                     | Свет кухня      | off   |         | kukhnia   | Кухня     | vtoroi   | Второй     |
       | switch.chainik                         | Чайник          | off   |         | kukhnia   | Кухня     | vtoroi   | Второй     |
+      | light.svet_spalnia                     | Люстра спальня  | off   |         | spalnia   | Спальня   | vtoroi   | Второй     |
       | light.svet_kabinet                     | Свет кабинет    | on    |         | kabinet   | Кабинет   | tretii   | Третий     |
       | scene.kino                             | Сцена кино      | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
       | light.yeelink_ceil43_9a4b_light        | Люстра гостиная | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
@@ -20,7 +21,9 @@
       | area_id   | name     | floor_id | aliases |
       | gostinaia | Гостиная | vtoroi   | зал     |
       | kukhnia   | Кухня    | vtoroi   |         |
+      | spalnia   | Спальня  | vtoroi   |         |
       | kabinet   | Кабинет  | tretii   |         |
+      | kladovka  | Кладовка | vtoroi   |         |
     И доступны этажи:
       | floor_id | name   | aliases | level |
       | vtoroi   | Второй | жилой   | 2     |
@@ -34,6 +37,33 @@
     Тогда ассистент вызывает сервисы:
       | domain | service  | entity_id          |
       | light  | turn_off | light.svet_kukhnia |
+      | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
+
+  Сценарий: Не расширять команду света на весь дом если в комнате колонки нет света
+    Допустим запрос пришел из комнаты:
+      | source_area_id | source_area_name |
+      | kladovka       | Кладовка         |
+    Когда пользователь говорит "включи свет"
+    Тогда ответ ассистента равен "Не нашла такое устройство"
+    И ассистент не вызывает сервисы
+
+  Сценарий: Включить только свет в комнате колонки если комната не указана
+    Допустим запрос пришел из комнаты:
+      | source_area_id | source_area_name |
+      | spalnia        | Спальня          |
+    Когда пользователь говорит "включи свет"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id          |
+      | light  | turn_on | light.svet_spalnia |
+
+  Сценарий: Название сущности важнее доменной команды
+    Допустим запрос пришел из комнаты:
+      | source_area_id | source_area_name |
+      | kukhnia        | Кухня            |
+    Когда пользователь говорит "выключи подсветку"
+    Тогда ассистент вызывает сервисы:
+      | domain | service  | entity_id                              |
+      | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
 
   Сценарий: Команда света не должна запускать сцену с пересекающимся алиасом
     Дано доступны сущности:
@@ -88,6 +118,7 @@
       | domain | service  | entity_id                              |
       | light  | turn_off | light.svet_gostinnaia                  |
       | light  | turn_off | light.svet_kukhnia                     |
+      | light  | turn_off | light.svet_spalnia                     |
       | light  | turn_off | light.yeelink_ceil43_9a4b_light        |
       | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
 
@@ -122,12 +153,36 @@
       | включи кондиционеры везде | turn_on  | climate | climate.konditsioner_spalnia | climate.konditsioner_kabinet |
       | включи все вентиляторы    | turn_on  | fan     | fan.ventiliator_gostinnaia   | fan.ventiliator_spalnia      |
 
+  Структура сценария: Общие названия доменов не зависят от имен сущностей
+    Дано доступны сущности:
+      | entity_id                    | name               | state | aliases | area_id | area_name | floor_id | floor_name |
+      | light.svet_spalnia           | Потолочная спальня | off   |         | spalnia | Спальня   | vtoroi   | Второй     |
+      | light.svet_kukhnia           | Центральная кухня  | off   |         | kukhnia | Кухня     | vtoroi   | Второй     |
+      | climate.konditsioner_spalnia | Сплит спальня      | cool  |         | spalnia | Спальня   | vtoroi   | Второй     |
+      | climate.konditsioner_kabinet | Настенный кабинет  | cool  |         | kabinet | Кабинет   | tretii   | Третий     |
+    И доступны комнаты:
+      | area_id | name    | floor_id | aliases |
+      | spalnia | Спальня | vtoroi   |         |
+      | kukhnia | Кухня   | vtoroi   |         |
+      | kabinet | Кабинет | tretii   |         |
+    Когда пользователь говорит "<text>"
+    Тогда ассистент вызывает сервисы:
+      | domain   | service   | entity_id  |
+      | <domain> | <service> | <entity_1> |
+      | <domain> | <service> | <entity_2> |
+
+    Примеры:
+      | text                     | service  | domain  | entity_1                     | entity_2                     |
+      | включи свет везде        | turn_on  | light   | light.svet_spalnia           | light.svet_kukhnia           |
+      | выключи все кондиционеры | turn_off | climate | climate.konditsioner_spalnia | climate.konditsioner_kabinet |
+
   Сценарий: Найти этаж по алиасу
     Когда пользователь говорит "выключи свет на жилом этаже"
     Тогда ассистент вызывает сервисы:
       | domain | service  | entity_id                              |
       | light  | turn_off | light.svet_gostinnaia                  |
       | light  | turn_off | light.svet_kukhnia                     |
+      | light  | turn_off | light.svet_spalnia                     |
       | light  | turn_off | light.yeelink_ceil43_9a4b_light        |
       | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
 
@@ -138,6 +193,7 @@
       | light  | turn_off | light.svet_gostinnaia                  |
       | light  | turn_off | light.svet_kukhnia                     |
       | switch | turn_off | switch.chainik                         |
+      | light  | turn_off | light.svet_spalnia                     |
       | light  | turn_off | light.yeelink_ceil43_9a4b_light        |
       | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
 
@@ -147,6 +203,7 @@
       | domain | service | entity_id                              | delay_seconds |
       | light  | turn_on | light.svet_gostinnaia                  | 10            |
       | light  | turn_on | light.svet_kukhnia                     | 10            |
+      | light  | turn_on | light.svet_spalnia                     | 10            |
       | light  | turn_on | light.svet_kabinet                     | 10            |
       | light  | turn_on | light.yeelink_ceil43_9a4b_light        | 10            |
       | light  | turn_on | light.yeelink_ceilc_a6e6_ambient_light | 10            |
@@ -159,6 +216,8 @@
       | light  | turn_off | light.svet_gostinnaia                  | 10            |
       | light  | turn_on  | light.svet_kukhnia                     |               |
       | light  | turn_off | light.svet_kukhnia                     | 10            |
+      | light  | turn_on  | light.svet_spalnia                     |               |
+      | light  | turn_off | light.svet_spalnia                     | 10            |
       | light  | turn_on  | light.yeelink_ceil43_9a4b_light        |               |
       | light  | turn_off | light.yeelink_ceil43_9a4b_light        | 10            |
       | light  | turn_on  | light.yeelink_ceilc_a6e6_ambient_light |               |
@@ -170,6 +229,7 @@
       | domain | service | entity_id                              | brightness_pct |
       | light  | turn_on | light.svet_gostinnaia                  | 50             |
       | light  | turn_on | light.svet_kukhnia                     | 50             |
+      | light  | turn_on | light.svet_spalnia                     | 50             |
       | light  | turn_on | light.yeelink_ceil43_9a4b_light        | 50             |
       | light  | turn_on | light.yeelink_ceilc_a6e6_ambient_light | 50             |
 
@@ -182,3 +242,5 @@
       | domain | service  | entity_id          | delay_seconds |
       | light  | turn_on  | light.svet_kukhnia |               |
       | light  | turn_off | light.svet_kukhnia | 10            |
+      | light  | turn_on  | light.yeelink_ceilc_a6e6_ambient_light |               |
+      | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light | 10            |

@@ -73,6 +73,50 @@ GENERIC_WORDS = {
     *location_resolver.ALL_LOCATIONS_WORDS,
 }
 
+# Общие пользовательские названия доменов. Они работают только если в HA payload
+# есть сущности этого домена, и не считаются специфичным остатком для broad fallback.
+DOMAIN_REQUEST_WORDS = {
+    "automation": {"автоматизация", "автоматизации"},
+    "binary_sensor": {"датчик", "сенсор"},
+    "button": {"кнопка"},
+    "climate": {
+        "климат",
+        "кондиционер",
+        "отопление",
+        "обогрев",
+        "подогрев",
+        "термостат",
+    },
+    "cover": {
+        "ворота",
+        "жалюзи",
+        "роллета",
+        "рольставни",
+        "ставни",
+        "штора",
+        "шторы",
+    },
+    "fan": {"вентилятор"},
+    "humidifier": {"увлажнитель"},
+    "input_boolean": {"переключатель", "тумблер"},
+    "light": {
+        "лампа",
+        "лампочка",
+        "люстра",
+        "освещение",
+        "подсветка",
+        "свет",
+        "светильник",
+    },
+    "media_player": {"колонка", "медиаплеер", "плеер", "телевизор"},
+    "remote": {"пульт"},
+    "scene": {"режим", "сцена"},
+    "script": {"скрипт", "сценарий"},
+    "sensor": {"датчик", "сенсор"},
+    "switch": {"выключатель", "розетка", "реле", "свитч", "переключатель"},
+    "vacuum": {"пылесос"},
+}
+
 
 @dataclass(frozen=True)
 class EntityMatch:
@@ -410,6 +454,7 @@ def find_entity_matches(
         requested_domains,
     )
     # Сначала ищем точные и частичные совпадения по имени и alias.
+    has_implicit_source_match = False
     scored_matches = [
         match
         for entity in search_objects
@@ -438,6 +483,9 @@ def find_entity_matches(
         ]
         if source_matches:
             scored_matches = source_matches
+            has_implicit_source_match = True
+        elif not has_requested_specific_entity_word(command, ha_objects, requested_domains):
+            scored_matches = []
 
     if not scored_matches:
         broad_matches = broad_domain_matches(
@@ -456,7 +504,19 @@ def find_entity_matches(
         requested_domains,
         location_context,
     )
-    if broad_matches:
+    allow_broad_override = bool(
+        (
+                location_context
+                and location_context.has_explicit_location
+        )
+        or (
+                location_context
+                and location_context.has_location
+                and is_implicit_location_domain_request(request_words, broad_match_domains(requested_domains))
+        )
+        or is_all_domain_request(request_words, broad_match_domains(requested_domains))
+    )
+    if broad_matches and allow_broad_override:
         return broad_matches
 
     best_score = max(match.score for match in scored_matches)
@@ -657,6 +717,7 @@ def broad_domain_matches(
         location_context: location_resolver.LocationContext | None = None,
 ) -> list[EntityMatch]:
     all_ha_objects = ha_objects
+    broad_domains = broad_match_domains(requested_domains)
     if location_context and location_context.has_location:
         ha_objects = [
             entity
@@ -682,16 +743,28 @@ def broad_domain_matches(
             if device_command.is_turnable(entity) and entity.entity_id.split(".", maxsplit=1)[0] != "scene"
         ]
 
-    if requested_domains <= state_query.STATE_ONLY_DOMAINS:
+    if broad_domains <= state_query.STATE_ONLY_DOMAINS:
         return []
 
     if (
-            requested_domains == {"light"}
+            broad_domains == {"light"}
+            and location_context
+            and location_context.has_location
+            and "свет" in request_words
+    ):
+        return [
+            EntityMatch(entity=entity, score=30)
+            for entity in ha_objects
+            if entity.entity_id.split(".", maxsplit=1)[0] == "light"
+        ]
+
+    if (
+            broad_domains == {"light"}
             and location_context
             and location_context.has_explicit_location
             and (
             "свет" in request_words
-            or not has_requested_specific_entity_word(command, all_ha_objects, requested_domains)
+            or not has_requested_specific_entity_word(command, all_ha_objects, broad_domains)
     )
     ):
         return [
@@ -700,22 +773,23 @@ def broad_domain_matches(
             if entity.entity_id.split(".", maxsplit=1)[0] == "light"
         ]
 
-    if requested_domains == {"light"} and (request_words & location_resolver.ALL_WORDS):
+    if broad_domains == {"light"} and (request_words & location_resolver.ALL_WORDS):
         return [
             EntityMatch(entity=entity, score=30)
             for entity in ha_objects
             if entity.entity_id.split(".", maxsplit=1)[0] == "light"
         ]
 
-    if is_all_domain_request(request_words, requested_domains):
+    if is_all_domain_request(request_words, broad_domains):
         return [
             EntityMatch(entity=entity, score=30)
             for entity in ha_objects
-            if entity.entity_id.split(".", maxsplit=1)[0] in requested_domains
+            if entity.entity_id.split(".", maxsplit=1)[0] in broad_domains
         ]
 
     domain_generic_words = set(GENERIC_WORDS)
-    domain_generic_words.update(category_words_for_domains(ha_objects, requested_domains))
+    domain_generic_words.update(domain_request_words_for_domains(broad_domains))
+    domain_generic_words.update(category_words_for_domains(ha_objects, broad_domains))
     domain_generic_words.update(location_resolver.location_words(ha_objects))
 
     if request_words - domain_generic_words:
@@ -724,8 +798,19 @@ def broad_domain_matches(
     return [
         EntityMatch(entity=entity, score=30)
         for entity in ha_objects
-        if entity.entity_id.split(".", maxsplit=1)[0] in requested_domains
+        if entity.entity_id.split(".", maxsplit=1)[0] in broad_domains
     ]
+
+
+def broad_match_domains(requested_domains: set[str]) -> set[str]:
+    non_bare_domains = requested_domains - device_command.BARE_ACTIVATION_DOMAINS
+    if non_bare_domains:
+        return non_bare_domains
+    return requested_domains
+
+
+def is_implicit_location_domain_request(request_words: set[str], requested_domains: set[str]) -> bool:
+    return requested_domains == {"light"} and "свет" in request_words
 
 
 def is_all_domain_request(request_words: set[str], requested_domains: set[str]) -> bool:
@@ -769,7 +854,19 @@ def detect_requested_domains(command: NormalizedText, ha_objects: list[HaObject]
         ):
             domains.add(domain)
 
+    present_domains = {device_command.entity_domain(entity) for entity in ha_objects}
+    for domain, words in DOMAIN_REQUEST_WORDS.items():
+        if domain in present_domains and request_words & words:
+            domains.add(domain)
+
     return domains
+
+
+def domain_request_words_for_domains(domains: set[str]) -> set[str]:
+    words: set[str] = set()
+    for domain in domains:
+        words.update(DOMAIN_REQUEST_WORDS.get(domain, set()))
+    return words
 
 
 def entity_phrases(entity: HaObject) -> list[str]:

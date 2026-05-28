@@ -53,6 +53,19 @@
       | domain | service | entity_id             |
       | button | press   | button.restart_zigbee |
 
+  Сценарий: Bare-activation имеет приоритет над разбором команды
+    Дано доступны сущности:
+      | entity_id             | name          | state | aliases | area_id   | area_name | floor_id | floor_name |
+      | light.svet_gostinnaia | Свет гостиная | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | scene.turn_off_lights | Выключи свет  | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
+    И доступны комнаты:
+      | area_id   | name     | floor_id | aliases |
+      | gostinaia | Гостиная | vtoroi   |         |
+    Когда пользователь говорит "выключи свет"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id             |
+      | scene  | turn_on | scene.turn_off_lights |
+
   Структура сценария: Нажать кнопку без явной команды если обращение совпадает с названием или алиасом
     Когда пользователь говорит "<text>"
     Тогда ассистент вызывает сервисы:
