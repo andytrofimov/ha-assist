@@ -1,7 +1,7 @@
 from functools import lru_cache
 
 from natasha import Doc, MorphVocab, NewsEmbedding, NewsMorphTagger, Segmenter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class NormalizedText(BaseModel):
@@ -9,6 +9,7 @@ class NormalizedText(BaseModel):
     tokens: list[str]
     normal_forms: list[str]
     normalized_text: str
+    state_forms: list[str] = Field(default_factory=list)
 
 
 class AgreementFeatures(BaseModel):
@@ -31,6 +32,7 @@ class RussianTextNormalizer:
 
         tokens: list[str] = []
         normal_forms: list[str] = []
+        state_forms: list[str] = []
 
         for token in doc.tokens:
             has_parseable_text = (
@@ -44,12 +46,16 @@ class RussianTextNormalizer:
                 token.lemmatize(self.morph_vocab)
             tokens.append(token.text)
             normal_forms.append(token.lemma or token.text)
+            state_form = state_predicate_form(token)
+            if state_form:
+                state_forms.append(state_form)
 
         return NormalizedText(
             original_text=text,
             tokens=tokens,
             normal_forms=normal_forms,
             normalized_text=" ".join(normal_forms),
+            state_forms=state_forms,
         )
 
     def first_word_agreement(self, text: str) -> AgreementFeatures:
@@ -88,6 +94,42 @@ def agree_adjective(
     if features.gender == "Neut":
         return neuter
     return masculine
+
+
+def state_predicate_form(token) -> str | None:
+    if (
+            token.feats.get("VerbForm") == "Part"
+            and token.feats.get("Voice") == "Pass"
+            and token.feats.get("Variant") == "Short"
+    ):
+        return token.lemma or token.text
+    if token.text == "открыто":
+        return "открыть"
+    return None
+
+
+def normalize(text: str) -> NormalizedText:
+    return get_text_normalizer().normalize(text)
+
+
+def normalized_words(text: NormalizedText) -> set[str]:
+    return set(text.normal_forms) | set(text.tokens)
+
+
+def normalized_form_words(text: NormalizedText) -> set[str]:
+    return set(text.normal_forms)
+
+
+def normalized_token_words(text: NormalizedText) -> set[str]:
+    return set(text.tokens)
+
+
+def split_aliases(aliases: str) -> list[str]:
+    return [
+        alias.strip()
+        for alias in aliases.replace(",", "/").split("/")
+        if alias.strip() and not alias.strip().startswith("ComputedNameType.")
+    ]
 
 
 @lru_cache(maxsize=1)

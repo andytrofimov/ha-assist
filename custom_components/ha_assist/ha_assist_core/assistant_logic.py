@@ -16,15 +16,14 @@ from .number_parser import (
     parse_brightness_percent,
     parse_temperature,
 )
-from .text_matching import (
-    expanded_words,
+from .text_normalizer import (
     normalize,
+    normalized_form_words,
+    normalized_token_words,
     normalized_words,
-    raw_word_variants,
-    raw_words,
     split_aliases,
+    NormalizedText,
 )
-from .text_normalizer import NormalizedText
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +149,7 @@ def build_assist_result(
         if is_general_question(command):
             return llm_fallback_result()
 
-        if state_query.is_state_query(command):
+        if action != "add_todo" and state_query.is_state_query(command):
             if not matches:
                 if not found_smart_home_signal or not location_context.has_explicit_location:
                     return llm_fallback_result()
@@ -563,7 +562,7 @@ def is_shadowed_bare_activation_match(
 ) -> bool:
     if entity_domain not in device_command.BARE_ACTIVATION_DOMAINS:
         return False
-    phrase_words = normalized_words(normalize(phrase)) | raw_word_variants(phrase)
+    phrase_words = normalized_words(normalize(phrase))
     specific_words = phrase_words - GENERIC_WORDS
     return bool(specific_words and specific_words <= bare_activation_shadow_words)
 
@@ -608,14 +607,14 @@ def is_weak_state_category_match(
 ) -> bool:
     if has_explicit_location or entity_domain not in state_query.STATE_ONLY_DOMAINS:
         return False
-    phrase_words = normalized_words(normalize(phrase)) | raw_word_variants(phrase)
+    phrase_words = normalized_words(normalize(phrase))
     if not phrase_words:
         return False
     normalized_phrase = normalize(phrase)
     phrase_specific_words = phrase_words - GENERIC_WORDS
     if len(normalized_phrase.normal_forms) == 1:
-        raw_extra_words = raw_words(command.original_text) - raw_words(phrase) - GENERIC_WORDS
-        return bool(raw_extra_words or request_words - GENERIC_WORDS - phrase_specific_words)
+        token_extra_words = normalized_token_words(command) - normalized_token_words(normalized_phrase) - GENERIC_WORDS
+        return bool(token_extra_words or request_words - GENERIC_WORDS - phrase_specific_words)
     if phrase_words - GENERIC_WORDS - state_category_words:
         return False
     return bool(request_words - GENERIC_WORDS - state_category_words)
@@ -625,10 +624,9 @@ def has_unmatched_state_query_words(command: NormalizedText, matches: list[Entit
     matched_words: set[str] = set()
     for match in matches:
         for phrase in raw_entity_phrases(match.entity):
-            matched_words.update(raw_word_variants(phrase))
             matched_words.update(normalized_words(normalize(phrase)))
-    request_words = raw_word_variants(command.original_text) | normalized_words(command)
-    return bool(request_words - expanded_words(GENERIC_WORDS) - matched_words)
+    request_words = normalized_form_words(command)
+    return bool(request_words - GENERIC_WORDS - matched_words)
 
 
 def score_climate_metadata(
@@ -801,31 +799,27 @@ def raw_entity_phrases(entity: HaObject) -> list[str]:
 
 def entity_search_words(entity: HaObject) -> set[str]:
     words = normalized_words(normalize(entity.name))
-    words.update(raw_word_variants(entity.name))
     for alias in split_aliases(entity.aliases):
         words.update(normalized_words(normalize(alias)))
-        words.update(raw_word_variants(alias))
     return {word for word in words if word and word not in GENERIC_WORDS}
 
 
 def entity_name_alias_words(entity: HaObject) -> set[str]:
     words = normalized_words(normalize(entity.name))
-    words.update(raw_word_variants(entity.name))
     for alias in split_aliases(entity.aliases):
         words.update(normalized_words(normalize(alias)))
-        words.update(raw_word_variants(alias))
     return {word for word in words if word}
 
 
 def entity_phrase_word_sets(entity: HaObject) -> list[set[str]]:
-    return [
-        normalized_words(normalize(phrase)) | raw_word_variants(phrase)
-        for phrase in [
-            entity.name,
-            *split_aliases(entity.aliases),
-        ]
-        if phrase.strip()
-    ]
+    phrase_sets: list[set[str]] = []
+    for phrase in [entity.name, *split_aliases(entity.aliases)]:
+        if not phrase.strip():
+            continue
+        normalized = normalize(phrase)
+        phrase_sets.append(normalized_form_words(normalized))
+        phrase_sets.append(normalized_token_words(normalized))
+    return [phrase_set for phrase_set in phrase_sets if phrase_set]
 
 
 def category_words_for_domains(ha_objects: list[HaObject], domains: set[str]) -> set[str]:

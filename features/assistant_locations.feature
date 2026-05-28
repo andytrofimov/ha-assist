@@ -140,3 +140,45 @@
       | switch | turn_off | switch.chainik                         |
       | light  | turn_off | light.yeelink_ceil43_9a4b_light        |
       | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
+
+  Сценарий: Отложенно включить весь свет во всех локациях
+    Когда пользователь говорит "включи весь свет через десять секунд"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id                              | delay_seconds |
+      | light  | turn_on | light.svet_gostinnaia                  | 10            |
+      | light  | turn_on | light.svet_kukhnia                     | 10            |
+      | light  | turn_on | light.svet_kabinet                     | 10            |
+      | light  | turn_on | light.yeelink_ceil43_9a4b_light        | 10            |
+      | light  | turn_on | light.yeelink_ceilc_a6e6_ambient_light | 10            |
+
+  Сценарий: Включить весь свет на этаже на время
+    Когда пользователь говорит "включи свет на втором этаже на десять секунд"
+    Тогда ассистент вызывает сервисы:
+      | domain | service  | entity_id                              | delay_seconds |
+      | light  | turn_on  | light.svet_gostinnaia                  |               |
+      | light  | turn_off | light.svet_gostinnaia                  | 10            |
+      | light  | turn_on  | light.svet_kukhnia                     |               |
+      | light  | turn_off | light.svet_kukhnia                     | 10            |
+      | light  | turn_on  | light.yeelink_ceil43_9a4b_light        |               |
+      | light  | turn_off | light.yeelink_ceil43_9a4b_light        | 10            |
+      | light  | turn_on  | light.yeelink_ceilc_a6e6_ambient_light |               |
+      | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light | 10            |
+
+  Сценарий: Установить яркость всему свету на этаже
+    Когда пользователь говорит "включи свет на втором этаже на пятьдесят процентов"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id                              | brightness_pct |
+      | light  | turn_on | light.svet_gostinnaia                  | 50             |
+      | light  | turn_on | light.svet_kukhnia                     | 50             |
+      | light  | turn_on | light.yeelink_ceil43_9a4b_light        | 50             |
+      | light  | turn_on | light.yeelink_ceilc_a6e6_ambient_light | 50             |
+
+  Сценарий: Комната колонки применяется вместе с длительностью
+    Допустим запрос пришел из комнаты:
+      | source_area_id | source_area_name |
+      | kukhnia        | Кухня            |
+    Когда пользователь говорит "включи свет на десять секунд"
+    Тогда ассистент вызывает сервисы:
+      | domain | service  | entity_id          | delay_seconds |
+      | light  | turn_on  | light.svet_kukhnia |               |
+      | light  | turn_off | light.svet_kukhnia | 10            |

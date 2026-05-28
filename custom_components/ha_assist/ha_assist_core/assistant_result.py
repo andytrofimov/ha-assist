@@ -16,7 +16,7 @@ class ResponseText:
     ACTION_NOT_FOUND = "Не поняла, что сделать"
     AREA_NOT_FOUND = "Не нашла такую комнату"
     FLOOR_NOT_FOUND = "Не нашла такой этаж"
-    AMBIGUOUS_AREA = "Уточните комнату"
+    AMBIGUOUS_AREA = "В какой комнате?"
 
     @classmethod
     def ok(cls) -> str:

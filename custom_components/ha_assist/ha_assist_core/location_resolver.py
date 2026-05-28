@@ -8,14 +8,14 @@ from .number_parser import (
     parse_duration_seconds,
     parse_temperature,
 )
-from .text_matching import (
-    expanded_words,
+from .text_normalizer import (
     normalize,
+    normalized_form_words,
+    normalized_token_words,
     normalized_words,
-    raw_word_variants,
     split_aliases,
+    NormalizedText,
 )
-from .text_normalizer import NormalizedText
 
 ALL_WORDS = {"весь", "все", "всё", "вся", "всей", "всю"}
 ALL_LOCATIONS_WORDS = {"везде", "всюду", "повсюду"}
@@ -116,16 +116,20 @@ def matched_location_ids(
             continue
         for phrase in location_entry_phrases(entry):
             normalized = normalize(phrase)
-            words = normalized_words(normalized) - expanded_words(generic_words)
+            form_words = normalized_form_words(normalized) - generic_words
+            token_words = normalized_token_words(normalized) - generic_words
             if (
                     id_field == "floor_id"
                     and "этаж" not in request_words
-                    and "этаж" not in words
+                    and "этаж" not in form_words
+                    and "этаж" not in token_words
                     and normalized.normalized_text != str(entry_id).lower()
             ):
                 continue
             if normalized.normalized_text in command.normalized_text or (
-                    words and words <= request_words
+                    form_words and form_words <= request_words
+            ) or (
+                    token_words and token_words <= request_words
             ):
                 matches.add(str(entry_id))
                 break
@@ -241,7 +245,7 @@ def has_unknown_location(
     if context.has_explicit_location:
         return False
     known_location_words = all_location_words(areas, floors) | location_words(ha_objects)
-    non_generic_words = location_tail_words - expanded_words(generic_words)
+    non_generic_words = location_tail_words - generic_words
     return bool(non_generic_words - known_location_words)
 
 
@@ -262,8 +266,7 @@ def prepositional_location_words(command: NormalizedText) -> set[str]:
         if is_parameter_tail(tail):
             continue
         normalized = normalize(tail)
-        words.update(normalized_words(normalized))
-        words.update(raw_word_variants(tail))
+        words.update(normalized_form_words(normalized))
     return words
 
 
@@ -304,7 +307,7 @@ def has_unknown_floor(
         return False
 
     known_floor_words = floor_words(floors) | entity_floor_words(ha_objects)
-    non_generic_words = request_words - expanded_words(generic_words)
+    non_generic_words = request_words - generic_words
     entity_words = all_entity_name_alias_words(ha_objects)
     return bool(non_generic_words - entity_words - known_floor_words)
 
@@ -337,7 +340,6 @@ def location_words(ha_objects: list[HaObject]) -> set[str]:
         for value in (entity.area_name, entity.floor_name, entity.area_id, entity.floor_id):
             if value:
                 words.update(normalized_words(normalize(value)))
-                words.update(raw_word_variants(value))
     return words
 
 
@@ -346,7 +348,6 @@ def all_location_words(areas: list[Any], floors: list[Any]) -> set[str]:
     for entry in [*areas, *floors]:
         for phrase in location_entry_phrases(entry):
             words.update(normalized_words(normalize(phrase)))
-            words.update(raw_word_variants(phrase))
     return words
 
 
@@ -355,7 +356,6 @@ def floor_words(floors: list[Any]) -> set[str]:
     for floor in floors:
         for phrase in location_entry_phrases(floor):
             words.update(normalized_words(normalize(phrase)))
-            words.update(raw_word_variants(phrase))
     return words
 
 
@@ -365,7 +365,6 @@ def entity_floor_words(ha_objects: list[HaObject]) -> set[str]:
         for value in (entity.floor_name, entity.floor_id):
             if value:
                 words.update(normalized_words(normalize(value)))
-                words.update(raw_word_variants(value))
     return words
 
 
@@ -373,8 +372,6 @@ def all_entity_name_alias_words(ha_objects: list[HaObject]) -> set[str]:
     words: set[str] = set()
     for entity in ha_objects:
         words.update(normalized_words(normalize(entity.name)))
-        words.update(raw_word_variants(entity.name))
         for alias in split_aliases(entity.aliases):
             words.update(normalized_words(normalize(alias)))
-            words.update(raw_word_variants(alias))
     return {word for word in words if word}

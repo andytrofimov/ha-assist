@@ -1,9 +1,13 @@
-import re
-
 from .ha_parser import HaObject
-from .text_normalizer import NormalizedText, agree_adjective, get_text_normalizer
+from .text_normalizer import AgreementFeatures, NormalizedText, agree_adjective, get_text_normalizer
 
 STATE_ONLY_DOMAINS = {"binary_sensor", "sensor", "todo", "weather"}
+STATE_QUESTION_WORDS = {"сколько", "какой", "какая", "какое", "что"}
+POWER_ON_WORDS = {"включить"}
+POWER_OFF_WORDS = {"выключить"}
+OPEN_WORDS = {"открыть"}
+CLOSED_WORDS = {"закрыть"}
+STATE_WORDS = POWER_ON_WORDS | POWER_OFF_WORDS | OPEN_WORDS | CLOSED_WORDS
 
 WEATHER_STATE_WORDS = {
     "clear-night": "ясно",
@@ -27,19 +31,13 @@ WEATHER_STATE_WORDS = {
 def is_state_query(command: NormalizedText) -> bool:
     # Вопросы состояния не должны превращаться в сервисные вызовы.
     text = command.original_text.strip().lower()
-    words = set(command.normal_forms)
+    words = set(command.normal_forms) | set(command.tokens)
 
     if text.endswith("?"):
         return True
-    if words & {"сколько", "какой", "какая", "какое", "что"}:
+    if words & STATE_QUESTION_WORDS:
         return True
-    return bool(
-        re.search(
-            r"\b(включ[её]н|включена|выключ[её]н|выключена|открыт|открыта|закрыт|закрыта)\b",
-            text,
-            flags=re.IGNORECASE,
-        )
-    )
+    return bool(state_predicate_words(command) & STATE_WORDS)
 
 
 def build_state_answer(
@@ -50,31 +48,34 @@ def build_state_answer(
     # Состояния Home Assistant переводим в короткий русский ответ для Assist.
     domain = entity.entity_id.split(".", maxsplit=1)[0]
     state = entity.state
-    words = normalized_words or set()
+    words = state_predicate_words(command, normalized_words)
 
     if domain == "binary_sensor":
         is_open = state == "on"
-        if words & {"закрыть", "закрытый"}:
-            return yes_no_state_answer(not is_open, entity.name, is_open)
-        if words & {"открыть", "открытый"}:
-            return yes_no_state_answer(is_open, entity.name, is_open)
-        return named_open_closed_state(entity.name, is_open)
+        features = get_text_normalizer().first_word_agreement(entity.name)
+        if words & CLOSED_WORDS:
+            return yes_no_state_answer(not is_open, features, is_open)
+        if words & OPEN_WORDS:
+            return yes_no_state_answer(is_open, features, is_open)
+        return named_open_closed_state(features, is_open)
 
     if state in {"on", "off"}:
         is_on = state == "on"
-        if words & {"включить", "включенный"}:
-            return yes_no_power_state_answer(is_on, entity.name, is_on)
-        if words & {"выключить", "выключенный"}:
-            return yes_no_power_state_answer(not is_on, entity.name, is_on)
-        return named_power_state(entity.name, is_on)
+        features = get_text_normalizer().first_word_agreement(entity.name)
+        if words & POWER_ON_WORDS:
+            return yes_no_power_state_answer(is_on, features, is_on)
+        if words & POWER_OFF_WORDS:
+            return yes_no_power_state_answer(not is_on, features, is_on)
+        return named_power_state(features, is_on)
 
     if state in {"open", "closed"}:
         is_open = state == "open"
-        if words & {"закрыть", "закрытый"}:
-            return yes_no_state_answer(not is_open, entity.name, is_open)
-        if words & {"открыть", "открытый"}:
-            return yes_no_state_answer(is_open, entity.name, is_open)
-        return named_open_closed_state(entity.name, is_open)
+        features = get_text_normalizer().first_word_agreement(entity.name)
+        if words & CLOSED_WORDS:
+            return yes_no_state_answer(not is_open, features, is_open)
+        if words & OPEN_WORDS:
+            return yes_no_state_answer(is_open, features, is_open)
+        return named_open_closed_state(features, is_open)
 
     if domain == "sensor" and entity.unit_of_measurement == "%":
         return format_percent_state(state)
@@ -86,6 +87,12 @@ def build_state_answer(
         return build_weather_answer(entity)
 
     return state
+
+
+def state_predicate_words(command: NormalizedText | None, normalized_words: set[str] | None = None) -> set[str]:
+    if command is not None:
+        return set(command.state_forms)
+    return normalized_words or set()
 
 
 def build_weather_answer(entity: HaObject) -> str:
@@ -169,39 +176,35 @@ def percent_word(value: int) -> str:
 
 def yes_no_state_answer(
         is_expected_state: bool,
-        entity_name: str,
+        features: AgreementFeatures,
         actual_is_open: bool,
 ) -> str:
-    return f"{'да' if is_expected_state else 'нет'}, {open_closed_adjective(entity_name, actual_is_open)}"
+    return f"{'да' if is_expected_state else 'нет'}, {open_closed_state_text(features, actual_is_open)}"
 
 
 def yes_no_power_state_answer(
         is_expected_state: bool,
-        entity_name: str,
+        features: AgreementFeatures,
         actual_is_on: bool,
 ) -> str:
-    return f"{'да' if is_expected_state else 'нет'}, {power_adjective(entity_name, actual_is_on)}"
+    return f"{'да' if is_expected_state else 'нет'}, {power_state_text(features, actual_is_on)}"
 
 
-def named_power_state(entity_name: str, is_on: bool) -> str:
-    features = get_text_normalizer().first_word_agreement(entity_name)
-    return f"{features.word} {power_adjective(entity_name, is_on)}"
+def named_power_state(features: AgreementFeatures, is_on: bool) -> str:
+    return f"{features.word} {power_state_text(features, is_on)}"
 
 
-def power_adjective(entity_name: str, is_on: bool) -> str:
-    features = get_text_normalizer().first_word_agreement(entity_name)
+def power_state_text(features: AgreementFeatures, is_on: bool) -> str:
     if is_on:
         return agree_adjective(features, "включен", "включена", "включено", "включены")
     return agree_adjective(features, "выключен", "выключена", "выключено", "выключены")
 
 
-def named_open_closed_state(entity_name: str, is_open: bool) -> str:
-    features = get_text_normalizer().first_word_agreement(entity_name)
-    return f"{features.word} {open_closed_adjective(entity_name, is_open)}"
+def named_open_closed_state(features: AgreementFeatures, is_open: bool) -> str:
+    return f"{features.word} {open_closed_state_text(features, is_open)}"
 
 
-def open_closed_adjective(entity_name: str, is_open: bool) -> str:
-    features = get_text_normalizer().first_word_agreement(entity_name)
+def open_closed_state_text(features: AgreementFeatures, is_open: bool) -> str:
     if is_open:
         return agree_adjective(features, "открыт", "открыта", "открыто", "открыты")
     return agree_adjective(features, "закрыт", "закрыта", "закрыто", "закрыты")

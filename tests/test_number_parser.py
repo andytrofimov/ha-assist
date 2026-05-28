@@ -7,7 +7,7 @@ from ha_assist_core.number_parser import (
     parse_russian_number,
     parse_temperature,
 )
-from ha_assist_core.text_matching import normalize
+from ha_assist_core.text_normalizer import normalize
 
 
 @pytest.mark.parametrize(
