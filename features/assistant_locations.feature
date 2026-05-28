@@ -18,12 +18,12 @@
       | light.yeelink_ceilc_a6e6_ambient_light | Подсветка кухня | off   |         | kukhnia   | Кухня     | vtoroi   | Второй     |
     И доступны комнаты:
       | area_id   | name     | floor_id | aliases |
-      | gostinaia | Гостиная | vtoroi   |         |
+      | gostinaia | Гостиная | vtoroi   | зал     |
       | kukhnia   | Кухня    | vtoroi   |         |
       | kabinet   | Кабинет  | tretii   |         |
     И доступны этажи:
       | floor_id | name   | aliases | level |
-      | vtoroi   | Второй |         | 2     |
+      | vtoroi   | Второй | жилой   | 2     |
       | tretii   | Третий |         | 3     |
 
   Сценарий: Использовать комнату колонки если комната не указана
@@ -35,8 +35,34 @@
       | domain | service  | entity_id          |
       | light  | turn_off | light.svet_kukhnia |
 
+  Сценарий: Явная комната важнее комнаты колонки
+    Допустим запрос пришел из комнаты:
+      | source_area_id | source_area_name |
+      | kukhnia        | Кухня            |
+    Когда пользователь говорит "выключи свет в гостиной"
+    Тогда ассистент вызывает сервисы:
+      | domain | service  | entity_id                       |
+      | light  | turn_off | light.svet_gostinnaia           |
+      | light  | turn_off | light.yeelink_ceil43_9a4b_light |
+
+  Сценарий: Найти комнату по алиасу
+    Когда пользователь говорит "выключи свет в зале"
+    Тогда ассистент вызывает сервисы:
+      | domain | service  | entity_id                       |
+      | light  | turn_off | light.svet_gostinnaia           |
+      | light  | turn_off | light.yeelink_ceil43_9a4b_light |
+
   Сценарий: Выключить весь свет на этаже
     Когда пользователь говорит "выключи свет на втором этаже"
+    Тогда ассистент вызывает сервисы:
+      | domain | service  | entity_id                              |
+      | light  | turn_off | light.svet_gostinnaia                  |
+      | light  | turn_off | light.svet_kukhnia                     |
+      | light  | turn_off | light.yeelink_ceil43_9a4b_light        |
+      | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
+
+  Сценарий: Найти этаж по алиасу
+    Когда пользователь говорит "выключи свет на жилом этаже"
     Тогда ассистент вызывает сервисы:
       | domain | service  | entity_id                              |
       | light  | turn_off | light.svet_gostinnaia                  |

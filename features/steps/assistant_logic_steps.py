@@ -175,6 +175,10 @@ def step_when_user_says_with_llm(context: Any, text: str) -> None:
 
 @step("ассистент вызывает сервисы:")
 def step_then_service_calls(context: Any) -> None:
+    assert not context.result.fallback_to_llm, (
+        context.result.response,
+        context.result.service_calls,
+    )
     expected = []
     for row in context.table:
         service_data: dict[str, Any] = {"entity_id": row_value(row, "entity_id")}
@@ -204,7 +208,10 @@ def step_then_service_calls(context: Any) -> None:
 
 @step("ассистент не вызывает сервисы")
 def step_then_no_service_calls(context: Any) -> None:
-    assert context.result.service_calls == []
+    assert context.result.service_calls == [], (
+        context.result.response,
+        context.result.service_calls,
+    )
 
 
 @step('ответ ассистента содержит "{text}"')
@@ -229,9 +236,15 @@ def step_then_response_empty(context: Any) -> None:
 
 @step("ассистент просит LLM fallback")
 def step_then_fallback_to_llm(context: Any) -> None:
-    assert context.result.fallback_to_llm
+    assert context.result.fallback_to_llm, (
+        context.result.response,
+        context.result.service_calls,
+    )
 
 
 @step("ассистент не просит LLM fallback")
 def step_then_not_fallback_to_llm(context: Any) -> None:
-    assert not context.result.fallback_to_llm
+    assert not context.result.fallback_to_llm, (
+        context.result.response,
+        context.result.service_calls,
+    )
