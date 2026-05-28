@@ -35,8 +35,14 @@
       | domain | service | entity_id  |
       | scene  | turn_on | scene.kino |
 
-  Сценарий: Включить выключатель по совпадению имени
-    Когда пользователь говорит "массаж"
+  Сценарий: Выполнить сцену без явной команды если обращение совпадает с названием
+    Когда пользователь говорит "Сцена кино"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id  |
+      | scene  | turn_on | scene.kino |
+
+  Сценарий: Включить выключатель по совпадению имени с явной командой
+    Когда пользователь говорит "включи массаж"
     Тогда ассистент вызывает сервисы:
       | domain | service | entity_id             |
       | switch | turn_on | switch.krovat_massazh |
@@ -47,11 +53,68 @@
       | domain | service | entity_id             |
       | button | press   | button.restart_zigbee |
 
+  Структура сценария: Нажать кнопку без явной команды если обращение совпадает с названием или алиасом
+    Когда пользователь говорит "<text>"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id             |
+      | button | press   | button.restart_zigbee |
+
+    Примеры:
+      | text                |
+      | Restart Zigbee      |
+      | Перезапустить зигби |
+
+  Сценарий: Уточнить комнату если bare-обращение совпадает с несколькими сценами
+    Дано доступны сущности:
+      | entity_id       | name       | state | aliases | area_id   | area_name | floor_id | floor_name |
+      | scene.kino_hall | Сцена кино | off   | кино    | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | scene.kino_bed  | Сцена кино | off   | кино    | spalnia   | Спальня   | vtoroi   | Второй     |
+    И доступны комнаты:
+      | area_id   | name     | floor_id | aliases |
+      | gostinaia | Гостиная | vtoroi   |         |
+      | spalnia   | Спальня  | vtoroi   |         |
+    Когда пользователь говорит "сцена кино"
+    Тогда ответ ассистента равен "Уточните комнату"
+    И ассистент не вызывает сервисы
+
+  Сценарий: Уточнить комнату если bare-обращение совпадает с несколькими кнопками
+    Дано доступны сущности:
+      | entity_id           | name           | state | aliases             | area_id   | area_name | floor_id | floor_name |
+      | button.restart_hall | Restart Zigbee | off   | Перезапустить зигби | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | button.restart_bed  | Restart Zigbee | off   | Перезапустить зигби | spalnia   | Спальня   | vtoroi   | Второй     |
+    И доступны комнаты:
+      | area_id   | name     | floor_id | aliases |
+      | gostinaia | Гостиная | vtoroi   |         |
+      | spalnia   | Спальня  | vtoroi   |         |
+    Когда пользователь говорит "Перезапустить зигби"
+    Тогда ответ ассистента равен "Уточните комнату"
+    И ассистент не вызывает сервисы
+
   Сценарий: Найти сущность по нормализованному алиасу
     Когда пользователь говорит "включи вентиляцию"
     Тогда ассистент вызывает сервисы:
       | domain | service | entity_id          |
       | switch | turn_on | switch.ventilation |
+
+  Сценарий: Уникальный алиас не требует комнату в запросе
+    Дано доступны сущности:
+      | entity_id             | name          | state | aliases               | area_id   | area_name | floor_id | floor_name |
+      | light.svet_gostinnaia | Свет гостиная | off   | праздничная подсветка | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | light.svet_kukhnia    | Свет кухня    | off   |                       | kukhnia   | Кухня     | vtoroi   | Второй     |
+    Когда пользователь говорит "включи праздничную подсветку"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id             |
+      | light  | turn_on | light.svet_gostinnaia |
+
+  Сценарий: Слово телевизор в названии сцены не должно требовать домен media_player
+    Дано доступны сущности:
+      | entity_id       | name            | state | aliases | area_id   | area_name | floor_id | floor_name |
+      | scene.tv_mode   | Телевизор вечер | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | media_player.tv | TV              | off   |         | spalnia   | Спальня   | vtoroi   | Второй     |
+    Когда пользователь говорит "включи телевизор вечер"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id     |
+      | scene  | turn_on | scene.tv_mode |
 
   Сценарий: Объект с уникальным названием находится без указания комнаты
     Когда пользователь говорит "открой штору"
