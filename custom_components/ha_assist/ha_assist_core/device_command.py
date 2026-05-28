@@ -31,11 +31,11 @@ TURNABLE_DOMAINS = {
 BARE_ACTIVATION_DOMAINS = {"button", "scene"}
 
 # Командные глаголы сравниваются после морфологической нормализации.
-TURN_ON_WORDS = {"включить", "активировать", "запустить"}
-TURN_OFF_WORDS = {"выключить", "отключить"}
-OPEN_WORDS = {"открыть"}
-CLOSE_WORDS = {"закрыть"}
-ADD_TODO_WORDS = {"добавить"}
+TURN_ON_WORDS = {"включить", "включи", "активировать", "активируй", "запустить", "запусти"}
+TURN_OFF_WORDS = {"выключить", "выключи", "отключить", "отключи"}
+OPEN_WORDS = {"открыть", "открой"}
+CLOSE_WORDS = {"закрыть", "закрой"}
+ADD_TODO_WORDS = {"добавить", "добавь"}
 UNSUPPORTED_ACTION_WORDS = {"показать"}
 
 
@@ -46,7 +46,7 @@ class ParsedTiming:
 
 
 def detect_action(command: NormalizedText) -> str | None:
-    words = set(command.normal_forms)
+    words = set(command.normal_forms) | set(command.tokens)
     if words & TURN_ON_WORDS:
         return "turn_on"
     if words & TURN_OFF_WORDS:

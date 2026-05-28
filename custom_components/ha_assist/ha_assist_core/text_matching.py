@@ -26,6 +26,8 @@ def raw_word_variants(text: str) -> set[str]:
 
 def word_variants(word: str) -> set[str]:
     variants = {word}
+    if word.endswith(("ы", "и")) and not word.endswith(("ами", "ями")) and len(word) > 4:
+        variants.add(word[:-1])
     if word.endswith("ая") and len(word) > 3:
         variants.add(f"{word[:-2]}ый")
         variants.add(f"{word[:-2]}ой")

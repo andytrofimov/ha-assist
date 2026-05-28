@@ -13,6 +13,7 @@ from .text_matching import (
 from .text_normalizer import NormalizedText
 
 ALL_WORDS = {"весь", "все", "всё", "вся", "всей", "всю"}
+ALL_LOCATIONS_WORDS = {"везде", "всюду", "повсюду"}
 
 
 @dataclass(frozen=True)
@@ -307,6 +308,10 @@ def is_all_devices_request(
     )
 
 
+def is_all_locations_request(request_words: set[str]) -> bool:
+    return bool(request_words & ALL_LOCATIONS_WORDS)
+
+
 def location_words(ha_objects: list[HaObject]) -> set[str]:
     words: set[str] = set()
     for entity in ha_objects:
@@ -354,4 +359,3 @@ def all_entity_name_alias_words(ha_objects: list[HaObject]) -> set[str]:
             words.update(normalized_words(normalize(alias)))
             words.update(raw_word_variants(alias))
     return {word for word in words if word}
-

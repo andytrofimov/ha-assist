@@ -61,6 +61,38 @@
       | light  | turn_off | light.yeelink_ceil43_9a4b_light        |
       | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
 
+  Структура сценария: Включить или выключить весь домен во всех локациях
+    Дано доступны сущности:
+      | entity_id                    | name                | state | aliases     | area_id   | area_name | floor_id | floor_name |
+      | light.svet_gostinnaia        | Свет гостиная       | on    |             | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | light.svet_kukhnia           | Свет кухня          | on    |             | kukhnia   | Кухня     | vtoroi   | Второй     |
+      | switch.chainik               | Чайник              | on    |             | kukhnia   | Кухня     | vtoroi   | Второй     |
+      | climate.konditsioner_spalnia | Кондиционер спальня | cool  | кондиционер | spalnia   | Спальня   | vtoroi   | Второй     |
+      | climate.konditsioner_kabinet | Кондиционер кабинет | cool  | кондиционер | kabinet   | Кабинет   | tretii   | Третий     |
+      | fan.ventiliator_gostinnaia   | Вентилятор гостиная | on    | вентилятор  | gostinaia | Гостиная  | vtoroi   | Второй     |
+      | fan.ventiliator_spalnia      | Вентилятор спальня  | on    | вентилятор  | spalnia   | Спальня   | vtoroi   | Второй     |
+    И доступны комнаты:
+      | area_id   | name     | floor_id | aliases |
+      | gostinaia | Гостиная | vtoroi   |         |
+      | kukhnia   | Кухня    | vtoroi   |         |
+      | spalnia   | Спальня  | vtoroi   |         |
+      | kabinet   | Кабинет  | tretii   |         |
+    Когда пользователь говорит "<text>"
+    Тогда ассистент вызывает сервисы:
+      | domain   | service   | entity_id  |
+      | <domain> | <service> | <entity_1> |
+      | <domain> | <service> | <entity_2> |
+
+    Примеры:
+      | text                      | service  | domain  | entity_1                     | entity_2                     |
+      | выключи свет везде        | turn_off | light   | light.svet_gostinnaia        | light.svet_kukhnia           |
+      | выключи везде свет        | turn_off | light   | light.svet_gostinnaia        | light.svet_kukhnia           |
+      | выключи весь свет         | turn_off | light   | light.svet_gostinnaia        | light.svet_kukhnia           |
+      | включи весь свет          | turn_on  | light   | light.svet_gostinnaia        | light.svet_kukhnia           |
+      | выключи все кондиционеры  | turn_off | climate | climate.konditsioner_spalnia | climate.konditsioner_kabinet |
+      | включи кондиционеры везде | turn_on  | climate | climate.konditsioner_spalnia | climate.konditsioner_kabinet |
+      | включи все вентиляторы    | turn_on  | fan     | fan.ventiliator_gostinnaia   | fan.ventiliator_spalnia      |
+
   Сценарий: Найти этаж по алиасу
     Когда пользователь говорит "выключи свет на жилом этаже"
     Тогда ассистент вызывает сервисы:

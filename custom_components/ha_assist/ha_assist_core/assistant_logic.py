@@ -70,6 +70,8 @@ GENERIC_WORDS = {
     "часа",
     "полчаса",
     "этаж",
+    *location_resolver.ALL_WORDS,
+    *location_resolver.ALL_LOCATIONS_WORDS,
 }
 
 
@@ -213,7 +215,10 @@ def build_assist_result(
         if not matches:
             return AssistLogicResult(response=ResponseText.ENTITY_NOT_FOUND)
 
-        if location_resolver.is_ambiguous_location(matches, location_context):
+        if (
+                location_resolver.is_ambiguous_location(matches, location_context)
+                and not is_all_domain_request(normalized_words(command), requested_domains)
+        ):
             return AssistLogicResult(response=ResponseText.AMBIGUOUS_AREA)
 
         for match in matches:
@@ -664,6 +669,13 @@ def broad_domain_matches(
             if entity.entity_id.split(".", maxsplit=1)[0] == "light"
         ]
 
+    if is_all_domain_request(request_words, requested_domains):
+        return [
+            EntityMatch(entity=entity, score=30)
+            for entity in ha_objects
+            if entity.entity_id.split(".", maxsplit=1)[0] in requested_domains
+        ]
+
     domain_generic_words = set(GENERIC_WORDS)
     domain_generic_words.update(category_words_for_domains(ha_objects, requested_domains))
     domain_generic_words.update(location_resolver.location_words(ha_objects))
@@ -676,6 +688,16 @@ def broad_domain_matches(
         for entity in ha_objects
         if entity.entity_id.split(".", maxsplit=1)[0] in requested_domains
     ]
+
+
+def is_all_domain_request(request_words: set[str], requested_domains: set[str]) -> bool:
+    return bool(
+        requested_domains
+        and (
+                request_words & location_resolver.ALL_WORDS
+                or location_resolver.is_all_locations_request(request_words)
+        )
+    )
 
 
 def has_requested_specific_entity_word(
