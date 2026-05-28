@@ -271,10 +271,11 @@ def is_parameter_tail(text: str) -> bool:
     tail = text.strip(" .,!?")
     if not tail:
         return False
+    normalized_tail = normalize(tail)
     return bool(
-        parse_brightness_percent(tail) is not None
-        or parse_temperature(tail) is not None
-        or parse_duration_seconds(f"на {tail}") is not None
+        parse_brightness_percent(normalized_tail) is not None
+        or parse_temperature(normalized_tail) is not None
+        or parse_duration_seconds(normalize(f"на {tail}")) is not None
     )
 
 

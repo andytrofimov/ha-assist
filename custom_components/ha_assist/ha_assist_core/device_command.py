@@ -57,9 +57,9 @@ def detect_action(command: NormalizedText) -> str | None:
         return "close"
     if words & ADD_TODO_WORDS:
         return "add_todo"
-    if {"поставить", "установить"} & words and parse_brightness_percent(command.original_text):
+    if {"поставить", "установить"} & words and parse_brightness_percent(command):
         return "turn_on"
-    if {"поставить", "установить"} & words and parse_temperature(command.original_text):
+    if {"поставить", "установить"} & words and parse_temperature(command):
         return "set_temperature"
     return None
 
@@ -189,10 +189,10 @@ def entity_domain(entity: HaObject) -> str:
     return entity.entity_id.split(".", maxsplit=1)[0]
 
 
-def parse_timing(text: str) -> ParsedTiming:
+def parse_timing(command: NormalizedText) -> ParsedTiming:
     # "через" означает задержку, а "на 15 минут" означает временное действие.
-    delay_seconds = parse_delay_seconds(text)
-    duration_seconds = parse_duration_seconds(text)
+    delay_seconds = parse_delay_seconds(command)
+    duration_seconds = parse_duration_seconds(command)
     return ParsedTiming(delay_seconds=delay_seconds, duration_seconds=duration_seconds)
 
 

@@ -33,10 +33,15 @@ class RussianTextNormalizer:
         normal_forms: list[str] = []
 
         for token in doc.tokens:
-            if not any(char.isalpha() for char in token.text):
+            has_parseable_text = (
+                    any(char.isalpha() or char.isdigit() for char in token.text)
+                    or token.text in {"%", "°"}
+            )
+            if not has_parseable_text:
                 continue
 
-            token.lemmatize(self.morph_vocab)
+            if any(char.isalpha() for char in token.text):
+                token.lemmatize(self.morph_vocab)
             tokens.append(token.text)
             normal_forms.append(token.lemma or token.text)
 

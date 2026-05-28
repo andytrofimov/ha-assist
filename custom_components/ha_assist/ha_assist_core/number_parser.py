@@ -1,5 +1,7 @@
 import re
 
+from .text_normalizer import NormalizedText
+
 NUMBER_ONES = {
     "ноль": 0,
     "один": 1,
@@ -46,11 +48,13 @@ NUMBER_HUNDREDS = {
 }
 
 NUMBER_WORDS = set(NUMBER_ONES) | set(NUMBER_TEENS) | set(NUMBER_TENS) | set(NUMBER_HUNDREDS)
-NUMBER_WORD_PATTERN = "|".join(sorted(NUMBER_WORDS, key=len, reverse=True))
-NUMBER_PATTERN = rf"\d{{1,4}}|(?:{NUMBER_WORD_PATTERN})(?:\s+(?:{NUMBER_WORD_PATTERN})){{0,3}}"
-TIME_UNIT_PATTERN = r"минут[ауы]?|час(?:а|ов)?"
-PERCENT_UNIT_PATTERN = r"%|процент(?:а|ов)?"
-TEMPERATURE_UNIT_PATTERN = r"°|градус(?:а|ов)?"
+TIME_UNIT_SECONDS = {
+    "секунда": 1,
+    "минута": 60,
+    "час": 60 * 60,
+}
+PERCENT_UNITS = {"%", "процент"}
+TEMPERATURE_UNITS = {"°", "градус"}
 
 
 def parse_russian_number(text: str) -> int | None:
@@ -61,6 +65,10 @@ def parse_russian_number(text: str) -> int | None:
         return int(text)
 
     words = re.findall(r"[а-яё]+", text)
+    return parse_russian_number_words(words)
+
+
+def parse_russian_number_words(words: list[str]) -> int | None:
     if not words or any(word not in NUMBER_WORDS for word in words):
         return None
     if "ноль" in words and len(words) > 1:
@@ -102,59 +110,92 @@ def parse_russian_number(text: str) -> int | None:
     return total
 
 
-def parse_brightness_percent(text: str) -> int | None:
-    value = parse_number_before_unit(text, PERCENT_UNIT_PATTERN)
+def parse_brightness_percent(command: NormalizedText) -> int | None:
+    value = parse_number_before_unit(command, PERCENT_UNITS)
     if value is None:
         return None
     return max(1, min(value, 100))
 
 
-def parse_temperature(text: str) -> int | None:
-    return parse_number_before_unit(text, TEMPERATURE_UNIT_PATTERN)
+def parse_temperature(command: NormalizedText) -> int | None:
+    return parse_number_before_unit(command, TEMPERATURE_UNITS)
 
 
-def parse_delay_seconds(text: str, marker: str = "через") -> int | None:
-    pattern = rf"\b{marker}\s+(?P<duration>полчаса|(?P<number>{NUMBER_PATTERN})\s+(?P<unit>{TIME_UNIT_PATTERN}))\b"
-    match = re.search(pattern, text, re.I)
-    if match is None:
+def parse_delay_seconds(command: NormalizedText) -> int | None:
+    for index, lemma in enumerate(command.normal_forms):
+        if lemma != "через":
+            continue
+        return parse_duration_after_index(command, index + 1)
+    return None
+
+
+def parse_duration_seconds(command: NormalizedText) -> int | None:
+    stop_index = next(
+        (
+            index
+            for index, lemma in enumerate(command.normal_forms)
+            if lemma == "через"
+        ),
+        len(command.normal_forms),
+    )
+    for index, lemma in enumerate(command.normal_forms[:stop_index]):
+        if lemma != "на":
+            continue
+        duration_seconds = parse_duration_after_index(command, index + 1, stop_index=stop_index)
+        if duration_seconds is not None:
+            return duration_seconds
+    return None
+
+
+def parse_number_before_unit(command: NormalizedText, units: set[str]) -> int | None:
+    for index, lemma in enumerate(command.normal_forms):
+        if lemma not in units:
+            continue
+        value = parse_number_ending_at(command, index)
+        if value is not None:
+            return value
+    return None
+
+
+def parse_duration_after_index(
+        command: NormalizedText,
+        start_index: int,
+        stop_index: int | None = None,
+) -> int | None:
+    stop_index = len(command.normal_forms) if stop_index is None else stop_index
+    if start_index >= stop_index:
         return None
-    return duration_match_to_seconds(match)
-
-
-def parse_duration_seconds(text: str) -> int | None:
-    if re.search(r"\bчерез\b", text, re.I):
-        text = re.sub(r"\bчерез\b.*", "", text, flags=re.I)
-
-    pattern = rf"\bна\s+(?P<duration>полчаса|(?P<number>{NUMBER_PATTERN})\s+(?P<unit>{TIME_UNIT_PATTERN}))\b"
-    match = re.search(pattern, text, re.I)
-    if match is None:
-        return None
-    return duration_match_to_seconds(match)
-
-
-def parse_number_before_unit(text: str, unit_pattern: str) -> int | None:
-    pattern = rf"\b(?P<number>{NUMBER_PATTERN})\s*(?:{unit_pattern})(?=$|\s|[,.!?])"
-    match = re.search(pattern, text, re.I)
-    if match is None:
-        return None
-    return parse_russian_number(match.group("number"))
-
-
-def duration_match_to_seconds(match: re.Match[str]) -> int | None:
-    duration = match.group("duration").lower()
-    if duration == "полчаса":
+    if command.normal_forms[start_index] == "полчаса":
         return 30 * 60
 
-    amount_text = match.group("number")
-    unit = match.group("unit")
-    amount = parse_russian_number(amount_text)
-    if amount is None:
+    for unit_index in range(start_index + 1, stop_index):
+        unit = command.normal_forms[unit_index]
+        if unit not in TIME_UNIT_SECONDS:
+            continue
+        amount = parse_number_between(command, start_index, unit_index)
+        if amount is None:
+            return None
+        return amount * TIME_UNIT_SECONDS[unit]
+    return None
+
+
+def parse_number_ending_at(command: NormalizedText, end_index: int) -> int | None:
+    if end_index <= 0:
         return None
-    return duration_to_seconds(amount, unit)
+    previous_token = command.tokens[end_index - 1]
+    if previous_token.isdigit():
+        return int(previous_token)
+
+    start_index = end_index
+    while start_index > 0 and command.normal_forms[start_index - 1] in NUMBER_WORDS:
+        start_index -= 1
+    return parse_number_between(command, start_index, end_index)
 
 
-def duration_to_seconds(amount: int, unit: str) -> int:
-    unit = unit.lower()
-    if unit.startswith("час"):
-        return amount * 60 * 60
-    return amount * 60
+def parse_number_between(command: NormalizedText, start_index: int, end_index: int) -> int | None:
+    if start_index >= end_index:
+        return None
+    if end_index - start_index == 1 and command.tokens[start_index].isdigit():
+        return int(command.tokens[start_index])
+    words = command.normal_forms[start_index:end_index]
+    return parse_russian_number_words(words)

@@ -100,9 +100,9 @@ def build_assist_result(
     for command_text in command_parts:
         command = normalize(command_text)
         action = device_command.detect_action(command)
-        timing = device_command.parse_timing(command.original_text)
-        brightness_pct = parse_brightness_percent(command.original_text)
-        target_temperature = parse_temperature(command.original_text)
+        timing = device_command.parse_timing(command)
+        brightness_pct = parse_brightness_percent(command)
+        target_temperature = parse_temperature(command)
         requested_domains = detect_requested_domains(command, ha_objects)
         location_context = location_resolver.detect_location_context(
             command=command,

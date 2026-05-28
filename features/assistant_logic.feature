@@ -172,6 +172,19 @@
       | domain | service  | entity_id          | delay_seconds |
       | light  | turn_off | light.svet_kabinet | 900           |
 
+  Сценарий: Отложенно включить свет через секунды
+    Когда пользователь говорит "включи свет в кабинете через десять секунд"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id          | delay_seconds |
+      | light  | turn_on | light.svet_kabinet | 10            |
+
+  Сценарий: Включить свет на несколько секунд
+    Когда пользователь говорит "включи свет в гостиной на десять секунд"
+    Тогда ассистент вызывает сервисы:
+      | domain | service  | entity_id             | delay_seconds |
+      | light  | turn_on  | light.svet_gostinnaia |               |
+      | light  | turn_off | light.svet_gostinnaia | 10            |
+
   Сценарий: Включить свет на два часа
     Когда пользователь говорит "включи свет в гостиной на два часа"
     Тогда ассистент вызывает сервисы:
