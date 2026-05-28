@@ -35,6 +35,22 @@
       | domain | service  | entity_id          |
       | light  | turn_off | light.svet_kukhnia |
 
+  Сценарий: Команда света не должна запускать сцену с пересекающимся алиасом
+    Дано доступны сущности:
+      | entity_id              | name           | state | aliases | area_id | area_name | floor_id | floor_name |
+      | light.svet_kabinet     | Свет кабинет   | off   |         | kabinet | Кабинет   | tretii   | Третий     |
+      | scene.vechernii_rezhim | Вечерний режим | off   | свет    | kabinet | Кабинет   | tretii   | Третий     |
+    И доступны комнаты:
+      | area_id | name    | floor_id | aliases |
+      | kabinet | Кабинет | tretii   |         |
+    Допустим запрос пришел из комнаты:
+      | source_area_id | source_area_name |
+      | kabinet        | Кабинет          |
+    Когда пользователь говорит "включи свет"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id          |
+      | light  | turn_on | light.svet_kabinet |
+
   Сценарий: Явная комната важнее комнаты колонки
     Допустим запрос пришел из комнаты:
       | source_area_id | source_area_name |

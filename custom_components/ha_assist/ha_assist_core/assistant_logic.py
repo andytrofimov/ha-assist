@@ -406,6 +406,10 @@ def find_entity_matches(
     requested_domains = detect_requested_domains(command, ha_objects)
     search_objects = location_resolver.filter_entities_by_location(ha_objects, location_context)
     state_category_words = category_head_words_for_domains(ha_objects, requested_domains)
+    bare_activation_shadow_words = shadow_words_for_bare_activation_domains(
+        ha_objects,
+        requested_domains,
+    )
     # Сначала ищем точные и частичные совпадения по имени и alias.
     scored_matches = [
         match
@@ -417,6 +421,7 @@ def find_entity_matches(
             requested_domains,
             state_category_words,
             bool(location_context and location_context.has_explicit_location),
+            bare_activation_shadow_words,
         ))
            is not None
     ]
@@ -496,6 +501,7 @@ def score_entity_match(
         requested_domains: set[str],
         state_category_words: set[str],
         has_explicit_location: bool,
+        bare_activation_shadow_words: set[str],
 ) -> EntityMatch | None:
     entity_domain = entity.entity_id.split(".", maxsplit=1)[0]
     phrases = entity_phrases(entity)
@@ -506,18 +512,24 @@ def score_entity_match(
     for phrase in phrases:
         # Полная фраза из имени или alias сильнее отдельных слов.
         if contains_phrase(command.normalized_text, phrase):
+            if is_shadowed_bare_activation_match(entity_domain, phrase, bare_activation_shadow_words):
+                continue
             if is_weak_state_category_match(command, entity_domain, phrase, request_words, state_category_words,
                                             has_explicit_location):
                 continue
             return EntityMatch(entity=entity, score=100 + len(phrase.split()))
     for phrase in raw_entity_phrases(entity):
         if contains_phrase(command.original_text.lower(), phrase):
+            if is_shadowed_bare_activation_match(entity_domain, phrase, bare_activation_shadow_words):
+                continue
             if is_weak_state_category_match(command, entity_domain, phrase, request_words, state_category_words,
                                             has_explicit_location):
                 continue
             return EntityMatch(entity=entity, score=100 + len(phrase.split()))
 
     if requested_domains and entity_domain not in requested_domains:
+        return None
+    if entity_domain in device_command.BARE_ACTIVATION_DOMAINS and bare_activation_shadow_words:
         return None
 
     phrase_scores = [
@@ -542,6 +554,34 @@ def score_entity_match(
         return EntityMatch(entity=entity, score=40 + len(specific_words))
 
     return None
+
+
+def is_shadowed_bare_activation_match(
+        entity_domain: str,
+        phrase: str,
+        bare_activation_shadow_words: set[str],
+) -> bool:
+    if entity_domain not in device_command.BARE_ACTIVATION_DOMAINS:
+        return False
+    phrase_words = normalized_words(normalize(phrase)) | raw_word_variants(phrase)
+    specific_words = phrase_words - GENERIC_WORDS
+    return bool(specific_words and specific_words <= bare_activation_shadow_words)
+
+
+def shadow_words_for_bare_activation_domains(
+        ha_objects: list[HaObject],
+        requested_domains: set[str],
+) -> set[str]:
+    non_bare_domains = requested_domains - device_command.BARE_ACTIVATION_DOMAINS
+    if not non_bare_domains:
+        return set()
+
+    shadow_words: set[str] = set()
+    for entity in ha_objects:
+        if device_command.entity_domain(entity) not in non_bare_domains:
+            continue
+        shadow_words.update(entity_name_alias_words(entity) - GENERIC_WORDS)
+    return shadow_words
 
 
 def score_phrase_words(
