@@ -3,6 +3,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from .ha_parser import HaObject
+from .number_parser import (
+    parse_brightness_percent,
+    parse_duration_seconds,
+    parse_temperature,
+)
 from .text_matching import (
     expanded_words,
     normalize,
@@ -254,10 +259,23 @@ def prepositional_location_words(command: NormalizedText) -> set[str]:
             maxsplit=1,
             flags=re.I,
         )[0]
+        if is_parameter_tail(tail):
+            continue
         normalized = normalize(tail)
         words.update(normalized_words(normalized))
         words.update(raw_word_variants(tail))
     return words
+
+
+def is_parameter_tail(text: str) -> bool:
+    tail = text.strip(" .,!?")
+    if not tail:
+        return False
+    return bool(
+        parse_brightness_percent(tail) is not None
+        or parse_temperature(tail) is not None
+        or parse_duration_seconds(f"на {tail}") is not None
+    )
 
 
 def has_unknown_floor(

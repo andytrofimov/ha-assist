@@ -51,6 +51,20 @@
       | domain | service | entity_id          |
       | light  | turn_on | light.svet_kabinet |
 
+  Структура сценария: Параметр яркости не должен считаться неизвестной комнатой
+    Допустим запрос пришел из комнаты:
+      | source_area_name |
+      | Кабинет          |
+    Когда пользователь говорит "<text>"
+    Тогда ассистент вызывает сервисы:
+      | domain | service | entity_id          | brightness_pct |
+      | light  | turn_on | light.svet_kabinet | <brightness>   |
+
+    Примеры:
+      | text                               | brightness |
+      | включи свет на пятьдесят процентов | 50         |
+      | включи свет на 50 процентов        | 50         |
+
   Сценарий: Явная комната важнее комнаты колонки
     Допустим запрос пришел из комнаты:
       | source_area_id | source_area_name |
