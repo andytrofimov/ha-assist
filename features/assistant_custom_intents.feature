@@ -31,8 +31,8 @@
       | выключи свет в гараже | Не нашла такую комнату. |
     Когда пользователь говорит "<text>"
     Тогда ассистент вызывает сервисы:
-      | domain | service  | entity_id           | item                                                         |
-      | todo   | add_item | todo.ha_assist_bugs | Запрос: выключи свет в гараже Ответ: Не нашла такую комнату. |
+      | domain | service  | entity_id             | item                                                         |
+      | todo   | add_item | todo.spisok_dorabotok | Запрос: выключи свет в гараже Ответ: Не нашла такую комнату. |
 
     Примеры:
       | text            |
