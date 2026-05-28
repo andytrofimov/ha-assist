@@ -1,8 +1,10 @@
 import asyncio
+from datetime import datetime
 from typing import Any
 
 from behave import step
 
+from ha_assist_core import custom_intents
 from ha_assist_core.assistant_logic import build_assist_result, build_assist_result_with_llm
 from ha_assist_core.ha_parser import HaObject
 
@@ -91,6 +93,7 @@ def build_result(context: Any, text: str) -> None:
         source_area_name=getattr(context, "source_area_name", None),
         source_floor_id=getattr(context, "source_floor_id", None),
         source_floor_name=getattr(context, "source_floor_name", None),
+        previous_exchange=getattr(context, "previous_exchange", None),
     )
 
 
@@ -130,6 +133,33 @@ def step_given_source_area(context: Any) -> None:
 @step('LLM отвечает "{response}"')
 def step_given_llm_response(context: Any, response: str) -> None:
     context.llm_response = response
+
+
+@step('текущее время "{time_text}"')
+def step_given_current_time(context: Any, time_text: str) -> None:
+    hour, minute = (int(part) for part in time_text.split(":", maxsplit=1))
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls) -> datetime:
+            return datetime(2026, 5, 29, hour, minute)
+
+    custom_intents.datetime = FixedDateTime
+
+
+@step("предыдущий обмен:")
+def step_given_previous_exchange(context: Any) -> None:
+    row = context.table[0]
+    context.previous_exchange = [
+        {
+            "role": "user",
+            "content": row_value(row, "user_text"),
+        },
+        {
+            "role": "assistant",
+            "content": row_value(row, "assistant_text"),
+        },
+    ]
 
 
 @step('пользователь говорит "{text}"')

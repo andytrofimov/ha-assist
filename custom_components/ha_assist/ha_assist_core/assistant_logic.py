@@ -9,6 +9,7 @@ from .assistant_result import (
     llm_fallback_result,
     strip_trailing_period,
 )
+from . import custom_intents
 from .ha_parser import HaObject
 from .llm_client import ChatMessage, generate_llm_response
 from . import device_command, location_resolver, state_query
@@ -133,8 +134,16 @@ def build_assist_result(
         source_area_name: str | None = None,
         source_floor_id: str | None = None,
         source_floor_name: str | None = None,
+        previous_exchange: list[ChatMessage] | None = None,
 ) -> AssistLogicResult:
     normalized_request = normalize(text)
+    custom_intent_result = custom_intents.handle_custom_intent(
+        normalized_request,
+        previous_exchange=previous_exchange,
+    )
+    if custom_intent_result is not None:
+        return custom_intent_result
+
     command_parts = split_compound_commands(normalized_request.original_text)
     all_service_calls: list[dict[str, Any]] = []
     state_answers: list[str] = []
@@ -385,6 +394,7 @@ async def build_assist_result_with_llm(
         source_floor_id: str | None = None,
         source_floor_name: str | None = None,
         llm_messages: list[ChatMessage] | None = None,
+        previous_exchange: list[ChatMessage] | None = None,
         llm_api_key: str | None = None,
 ) -> AssistLogicResult:
     result = build_assist_result(
@@ -396,6 +406,7 @@ async def build_assist_result_with_llm(
         source_area_name=source_area_name,
         source_floor_id=source_floor_id,
         source_floor_name=source_floor_name,
+        previous_exchange=previous_exchange or (llm_messages[:-1] if llm_messages else None),
     )
     if not result.fallback_to_llm:
         return result

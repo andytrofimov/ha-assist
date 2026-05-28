@@ -23,6 +23,12 @@ def build_llm_messages(
     ]
 
 
+def get_previous_exchange(conversation_id: str | None) -> list[ChatMessage]:
+    conversation_key = conversation_id or DEFAULT_CONVERSATION_ID
+    history = _history_by_conversation[conversation_key]
+    return history[-2:]
+
+
 def remember_exchange(
         conversation_id: str | None,
         user_text: str,

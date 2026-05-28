@@ -1,7 +1,7 @@
 ﻿from typing import Any
 
 from .assistant_logic import build_assist_result_with_llm
-from .conversation_memory import build_llm_messages, remember_exchange
+from .conversation_memory import build_llm_messages, get_previous_exchange, remember_exchange
 from .ha_parser import HaObject
 
 
@@ -32,6 +32,7 @@ async def process_assist_payload(
         source_floor_id=source_floor_id,
         source_floor_name=source_floor_name,
         llm_messages=build_llm_messages(conversation_id, text),
+        previous_exchange=get_previous_exchange(conversation_id),
         llm_api_key=llm_api_key,
     )
     response_text = add_tts_trailing_period(result.response)

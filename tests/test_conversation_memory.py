@@ -2,6 +2,7 @@ from ha_assist_core.conversation_memory import (
     MAX_HISTORY_MESSAGES,
     build_llm_messages,
     clear_memory,
+    get_previous_exchange,
     remember_exchange,
 )
 
@@ -69,6 +70,25 @@ def test_default_conversation_history_is_shared_for_missing_ids() -> None:
         {
             "role": "user",
             "content": "уточнение",
+        },
+    ]
+
+
+def test_previous_exchange_returns_last_user_and_assistant_messages() -> None:
+    clear_memory()
+    remember_exchange("conversation-1", "первый вопрос", "первый ответ")
+    remember_exchange("conversation-1", "второй вопрос", "второй ответ")
+
+    messages = get_previous_exchange("conversation-1")
+
+    assert messages == [
+        {
+            "role": "user",
+            "content": "второй вопрос",
+        },
+        {
+            "role": "assistant",
+            "content": "второй ответ",
         },
     ]
 
