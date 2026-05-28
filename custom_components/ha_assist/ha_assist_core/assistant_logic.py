@@ -16,7 +16,15 @@ from .number_parser import (
     parse_brightness_percent,
     parse_temperature,
 )
-from .text_normalizer import NormalizedText, get_text_normalizer
+from .text_matching import (
+    expanded_words,
+    normalize,
+    normalized_words,
+    raw_word_variants,
+    raw_words,
+    split_aliases,
+)
+from .text_normalizer import NormalizedText
 
 logger = logging.getLogger(__name__)
 
@@ -137,11 +145,24 @@ def build_assist_result(
                 or location_context.has_location
         )
 
+        if is_general_question(command):
+            return llm_fallback_result()
+
         if state_query.is_state_query(command):
             if not matches:
-                if not found_smart_home_signal:
+                if not found_smart_home_signal or not location_context.has_explicit_location:
                     return llm_fallback_result()
                 return AssistLogicResult(response=ResponseText.ENTITY_NOT_FOUND)
+            if (
+                    action is None
+                    and not location_context.has_explicit_location
+                    and all(
+                device_command.entity_domain(match.entity) in state_query.STATE_ONLY_DOMAINS
+                for match in matches
+            )
+                    and has_unmatched_state_query_words(command, matches)
+            ):
+                return llm_fallback_result()
             state_answers.extend(
                 state_query.build_state_answer(
                     match.entity,
@@ -158,9 +179,6 @@ def build_assist_result(
             return llm_fallback_result()
 
         if action is None and device_command.has_unsupported_action(command):
-            return llm_fallback_result()
-
-        if action is None and is_general_question(command):
             return llm_fallback_result()
 
         if action is None and matches:
@@ -349,49 +367,6 @@ async def build_assist_result_with_llm(
     return AssistLogicResult(response=strip_trailing_period(llm_response))
 
 
-def normalize(text: str) -> NormalizedText:
-    return get_text_normalizer().normalize(text)
-
-
-def normalized_words(text: NormalizedText) -> set[str]:
-    words = set(text.normal_forms) | set(text.tokens)
-    expanded: set[str] = set()
-    for word in words:
-        if word and not word.isdigit():
-            expanded.update(word_variants(word))
-    return expanded
-
-
-def raw_words(text: str) -> set[str]:
-    return set(re.findall(r"[A-Za-zА-Яа-яЁё]+", text.lower()))
-
-
-def raw_word_variants(text: str) -> set[str]:
-    return expanded_words(raw_words(text))
-
-
-def word_variants(word: str) -> set[str]:
-    variants = {word}
-    if word.endswith("ая") and len(word) > 3:
-        variants.add(f"{word[:-2]}ый")
-        variants.add(f"{word[:-2]}ой")
-    if word.endswith("яя") and len(word) > 3:
-        variants.add(f"{word[:-2]}ий")
-        variants.add(f"{word[:-2]}ей")
-    if word.endswith(("а", "я")) and len(word) > 3:
-        variants.add(f"{word[:-1]}е")
-    if word[-1:] not in {"а", "е", "ё", "и", "й", "о", "у", "ы", "ь", "э", "ю", "я"}:
-        variants.add(f"{word}е")
-    return variants
-
-
-def expanded_words(words: set[str]) -> set[str]:
-    expanded: set[str] = set()
-    for word in words:
-        expanded.update(word_variants(word))
-    return expanded
-
-
 def split_compound_commands(text: str) -> list[str]:
     # Делим только там, где после союза явно начинается новая команда.
     parts = re.split(
@@ -403,9 +378,17 @@ def split_compound_commands(text: str) -> list[str]:
 
 
 def is_general_question(command: NormalizedText) -> bool:
+    text = command.original_text.lower()
+    words = set(command.normal_forms) | set(command.tokens)
+    if re.search(r"\bчто\s+(?:делать|сделать)\b", text, re.I):
+        return True
+    if "можно" in words and "ли" in words:
+        return True
+    if "если" in words:
+        return True
     return bool(
         set(command.normal_forms)
-        & {"почему", "зачем", "кто", "когда", "где", "как", "каков", "какова"}
+        & {"почему", "зачем", "кто", "когда", "где", "как", "чем", "каков", "какова"}
     )
 
 
@@ -417,11 +400,19 @@ def find_entity_matches(
     request_words = normalized_words(command)
     requested_domains = detect_requested_domains(command, ha_objects)
     search_objects = location_resolver.filter_entities_by_location(ha_objects, location_context)
+    state_category_words = category_head_words_for_domains(ha_objects, requested_domains)
     # Сначала ищем точные и частичные совпадения по имени и alias.
     scored_matches = [
         match
         for entity in search_objects
-        if (match := score_entity_match(entity, command, request_words, requested_domains))
+        if (match := score_entity_match(
+            entity,
+            command,
+            request_words,
+            requested_domains,
+            state_category_words,
+            bool(location_context and location_context.has_explicit_location),
+        ))
            is not None
     ]
     if (
@@ -498,23 +489,34 @@ def score_entity_match(
         command: NormalizedText,
         request_words: set[str],
         requested_domains: set[str],
+        state_category_words: set[str],
+        has_explicit_location: bool,
 ) -> EntityMatch | None:
     entity_domain = entity.entity_id.split(".", maxsplit=1)[0]
     phrases = entity_phrases(entity)
+    generic_words = set(GENERIC_WORDS)
+    if entity_domain in state_query.STATE_ONLY_DOMAINS:
+        generic_words.update(state_category_words)
 
     for phrase in phrases:
         # Полная фраза из имени или alias сильнее отдельных слов.
         if contains_phrase(command.normalized_text, phrase):
+            if is_weak_state_category_match(command, entity_domain, phrase, request_words, state_category_words,
+                                            has_explicit_location):
+                continue
             return EntityMatch(entity=entity, score=100 + len(phrase.split()))
     for phrase in raw_entity_phrases(entity):
         if contains_phrase(command.original_text.lower(), phrase):
+            if is_weak_state_category_match(command, entity_domain, phrase, request_words, state_category_words,
+                                            has_explicit_location):
+                continue
             return EntityMatch(entity=entity, score=100 + len(phrase.split()))
 
     if requested_domains and entity_domain not in requested_domains:
         return None
 
     phrase_scores = [
-        score_phrase_words(phrase_words, request_words)
+        score_phrase_words(phrase_words, request_words, generic_words)
         for phrase_words in entity_phrase_word_sets(entity)
     ]
     climate_metadata_score = score_climate_metadata(entity, request_words, requested_domains)
@@ -525,7 +527,7 @@ def score_entity_match(
         return EntityMatch(entity=entity, score=max(phrase_scores))
 
     entity_words = entity_search_words(entity)
-    specific_words = entity_words - GENERIC_WORDS
+    specific_words = entity_words - generic_words
     if entity_domain in state_query.STATE_ONLY_DOMAINS and not requested_domains:
         return None
     if requested_domains and not specific_words and entity_domain in requested_domains:
@@ -540,14 +542,48 @@ def score_entity_match(
 def score_phrase_words(
         phrase_words: set[str],
         request_words: set[str],
+        generic_words: set[str],
 ) -> int | None:
-    specific_words = phrase_words - GENERIC_WORDS
+    specific_words = phrase_words - generic_words
     matched_specific_words = request_words & specific_words
     if not matched_specific_words:
         return None
 
     unmatched_specific_words = specific_words - request_words
     return 50 + (10 * len(matched_specific_words)) - len(unmatched_specific_words)
+
+
+def is_weak_state_category_match(
+        command: NormalizedText,
+        entity_domain: str,
+        phrase: str,
+        request_words: set[str],
+        state_category_words: set[str],
+        has_explicit_location: bool,
+) -> bool:
+    if has_explicit_location or entity_domain not in state_query.STATE_ONLY_DOMAINS:
+        return False
+    phrase_words = normalized_words(normalize(phrase)) | raw_word_variants(phrase)
+    if not phrase_words:
+        return False
+    normalized_phrase = normalize(phrase)
+    phrase_specific_words = phrase_words - GENERIC_WORDS
+    if len(normalized_phrase.normal_forms) == 1:
+        raw_extra_words = raw_words(command.original_text) - raw_words(phrase) - GENERIC_WORDS
+        return bool(raw_extra_words or request_words - GENERIC_WORDS - phrase_specific_words)
+    if phrase_words - GENERIC_WORDS - state_category_words:
+        return False
+    return bool(request_words - GENERIC_WORDS - state_category_words)
+
+
+def has_unmatched_state_query_words(command: NormalizedText, matches: list[EntityMatch]) -> bool:
+    matched_words: set[str] = set()
+    for match in matches:
+        for phrase in raw_entity_phrases(match.entity):
+            matched_words.update(raw_word_variants(phrase))
+            matched_words.update(normalized_words(normalize(phrase)))
+    request_words = raw_word_variants(command.original_text) | normalized_words(command)
+    return bool(request_words - expanded_words(GENERIC_WORDS) - matched_words)
 
 
 def score_climate_metadata(
@@ -577,6 +613,7 @@ def broad_domain_matches(
         requested_domains: set[str],
         location_context: location_resolver.LocationContext | None = None,
 ) -> list[EntityMatch]:
+    all_ha_objects = ha_objects
     if location_context and location_context.has_location:
         ha_objects = [
             entity
@@ -602,6 +639,24 @@ def broad_domain_matches(
             if device_command.is_turnable(entity) and entity.entity_id.split(".", maxsplit=1)[0] != "scene"
         ]
 
+    if requested_domains <= state_query.STATE_ONLY_DOMAINS:
+        return []
+
+    if (
+            requested_domains == {"light"}
+            and location_context
+            and location_context.has_explicit_location
+            and (
+            "свет" in request_words
+            or not has_requested_specific_entity_word(command, all_ha_objects, requested_domains)
+    )
+    ):
+        return [
+            EntityMatch(entity=entity, score=30)
+            for entity in ha_objects
+            if entity.entity_id.split(".", maxsplit=1)[0] == "light"
+        ]
+
     if requested_domains == {"light"} and (request_words & location_resolver.ALL_WORDS):
         return [
             EntityMatch(entity=entity, score=30)
@@ -623,13 +678,35 @@ def broad_domain_matches(
     ]
 
 
+def has_requested_specific_entity_word(
+        command: NormalizedText,
+        ha_objects: list[HaObject],
+        requested_domains: set[str],
+) -> bool:
+    category_words = category_words_for_domains(ha_objects, requested_domains)
+    location_words = location_resolver.location_words(ha_objects)
+    entity_words: set[str] = set()
+    for entity in ha_objects:
+        if device_command.entity_domain(entity) in requested_domains:
+            entity_words.update(entity_name_alias_words(entity))
+    specific_words = entity_words - category_words - location_words - GENERIC_WORDS
+    return bool(normalized_words(command) & specific_words)
+
+
 def detect_requested_domains(command: NormalizedText, ha_objects: list[HaObject]) -> set[str]:
     request_words = normalized_words(command)
+    known_location_words = location_resolver.location_words(ha_objects)
     domains: set[str] = set()
     for entity in ha_objects:
         domain = entity.entity_id.split(".", maxsplit=1)[0]
-        entity_words = entity_name_alias_words(entity) - GENERIC_WORDS
+        entity_words = entity_name_alias_words(entity) - GENERIC_WORDS - known_location_words
         if request_words & entity_words:
+            domains.add(domain)
+        if (
+                domain == "climate"
+                and request_words & {"отопление", "обогрев", "подогрев"}
+                and ("heat" in (entity.hvac_modes or []) or entity.state == "heat")
+        ):
             domains.add(domain)
 
     return domains
@@ -660,24 +737,12 @@ def raw_entity_phrases(entity: HaObject) -> list[str]:
     ]
 
 
-def split_aliases(aliases: str) -> list[str]:
-    return [
-        alias.strip()
-        for alias in aliases.replace(",", "/").split("/")
-        if alias.strip() and not alias.strip().startswith("ComputedNameType.")
-    ]
-
-
 def entity_search_words(entity: HaObject) -> set[str]:
     words = normalized_words(normalize(entity.name))
     words.update(raw_word_variants(entity.name))
     for alias in split_aliases(entity.aliases):
         words.update(normalized_words(normalize(alias)))
         words.update(raw_word_variants(alias))
-    for location_name in (entity.area_name, entity.floor_name):
-        if location_name:
-            words.update(normalized_words(normalize(location_name)))
-            words.update(raw_word_variants(location_name))
     return {word for word in words if word and word not in GENERIC_WORDS}
 
 
@@ -696,8 +761,6 @@ def entity_phrase_word_sets(entity: HaObject) -> list[set[str]]:
         for phrase in [
             entity.name,
             *split_aliases(entity.aliases),
-            entity.area_name or "",
-            entity.floor_name or "",
         ]
         if phrase.strip()
     ]
@@ -711,6 +774,33 @@ def category_words_for_domains(ha_objects: list[HaObject], domains: set[str]) ->
             continue
         for word in entity_name_alias_words(entity) - GENERIC_WORDS:
             key = (domain, word)
+            word_counts[key] = word_counts.get(key, 0) + 1
+    return {
+        word
+        for (domain, word), count in word_counts.items()
+        if domain in domains and count > 1
+    }
+
+
+def category_head_words_for_domains(ha_objects: list[HaObject], domains: set[str]) -> set[str]:
+    word_counts: dict[tuple[str, str], int] = {}
+    for entity in ha_objects:
+        domain = device_command.entity_domain(entity)
+        if domain not in domains:
+            continue
+        for phrase in [entity.name, *split_aliases(entity.aliases)]:
+            normalized = normalize(phrase)
+            head_word = next(
+                (
+                    word
+                    for word in [*normalized.normal_forms, *normalized.tokens]
+                    if word and word not in GENERIC_WORDS
+                ),
+                None,
+            )
+            if not head_word:
+                continue
+            key = (domain, head_word)
             word_counts[key] = word_counts.get(key, 0) + 1
     return {
         word
