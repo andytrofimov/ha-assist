@@ -1,3 +1,5 @@
+import pytest
+
 from ha_assist_core.number_parser import (
     parse_brightness_percent,
     parse_delay_seconds,
@@ -7,36 +9,95 @@ from ha_assist_core.number_parser import (
 )
 
 
-def test_parse_russian_number_supports_voice_forms() -> None:
-    assert parse_russian_number("ноль") == 0
-    assert parse_russian_number("одна") == 1
-    assert parse_russian_number("две") == 2
-    assert parse_russian_number("пятнадцать") == 15
-    assert parse_russian_number("двадцать три") == 23
-    assert parse_russian_number("сто один") == 101
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("ноль", 0),
+        ("одна", 1),
+        ("две", 2),
+        ("пятнадцать", 15),
+        ("двадцать три", 23),
+        ("сто один", 101),
+    ],
+)
+def test_parse_russian_number_supports_voice_forms(text: str, expected: int) -> None:
+    assert parse_russian_number(text) == expected
 
 
-def test_parse_brightness_percent_accepts_digits_and_words() -> None:
-    assert parse_brightness_percent("включи свет на 15 процентов") == 15
-    assert parse_brightness_percent("включи свет на пятнадцать процентов") == 15
-    assert parse_brightness_percent("включи свет на ноль процентов") == 1
-    assert parse_brightness_percent("включи свет на сто один процент") == 100
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("включи свет на 15 процентов", 15),
+        ("включи свет на пятнадцать процентов", 15),
+        ("включи свет на ноль процентов", 1),
+        ("включи свет на сто один процент", 100),
+    ],
+)
+def test_parse_brightness_percent_accepts_digits_and_words(text: str, expected: int) -> None:
+    assert parse_brightness_percent(text) == expected
 
 
-def test_parse_delay_seconds_accepts_digits_and_words() -> None:
-    assert parse_delay_seconds("выключи свет через 15 минут") == 900
-    assert parse_delay_seconds("выключи свет через пятнадцать минут") == 900
-    assert parse_delay_seconds("выключи свет через две минуты") == 120
-    assert parse_delay_seconds("выключи свет через один час") == 3600
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("выключи свет через 15 минут", 900),
+        ("выключи свет через пятнадцать минут", 900),
+        ("выключи свет через две минуты", 120),
+        ("выключи свет через один час", 3600),
+    ],
+)
+def test_parse_delay_seconds_accepts_digits_and_words(text: str, expected: int) -> None:
+    assert parse_delay_seconds(text) == expected
 
 
-def test_parse_duration_seconds_accepts_digits_and_words() -> None:
-    assert parse_duration_seconds("включи свет на 30 минут") == 1800
-    assert parse_duration_seconds("включи свет на тридцать минут") == 1800
-    assert parse_duration_seconds("включи свет на два часа") == 7200
-    assert parse_duration_seconds("включи свет на полчаса") == 1800
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("включи свет на 30 минут", 1800),
+        ("включи свет на тридцать минут", 1800),
+        ("включи свет на два часа", 7200),
+        ("включи свет на полчаса", 1800),
+    ],
+)
+def test_parse_duration_seconds_accepts_digits_and_words(text: str, expected: int) -> None:
+    assert parse_duration_seconds(text) == expected
 
 
-def test_parse_temperature_accepts_digits_and_words() -> None:
-    assert parse_temperature("поставь кондиционер на 22 градуса") == 22
-    assert parse_temperature("поставь кондиционер на двадцать два градуса") == 22
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("поставь кондиционер на 22 градуса", 22),
+        ("поставь кондиционер на двадцать два градуса", 22),
+    ],
+)
+def test_parse_temperature_accepts_digits_and_words(text: str, expected: int) -> None:
+    assert parse_temperature(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "ноль один",
+        "один два",
+        "двадцать десять",
+        "сто сто",
+        "пять попугаев",
+    ],
+)
+def test_parse_russian_number_rejects_invalid_phrases(text: str) -> None:
+    assert parse_russian_number(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "включи свет на процентов",
+        "выключи свет через минут",
+        "поставь кондиционер на градусов",
+    ],
+)
+def test_number_parsers_reject_missing_values(text: str) -> None:
+    assert parse_brightness_percent(text) is None
+    assert parse_delay_seconds(text) is None
+    assert parse_temperature(text) is None

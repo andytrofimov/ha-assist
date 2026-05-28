@@ -117,7 +117,6 @@
       | text                      | service  | domain  | entity_1                     | entity_2                     |
       | выключи свет везде        | turn_off | light   | light.svet_gostinnaia        | light.svet_kukhnia           |
       | выключи везде свет        | turn_off | light   | light.svet_gostinnaia        | light.svet_kukhnia           |
-      | выключи весь свет         | turn_off | light   | light.svet_gostinnaia        | light.svet_kukhnia           |
       | включи весь свет          | turn_on  | light   | light.svet_gostinnaia        | light.svet_kukhnia           |
       | выключи все кондиционеры  | turn_off | climate | climate.konditsioner_spalnia | climate.konditsioner_kabinet |
       | включи кондиционеры везде | turn_on  | climate | climate.konditsioner_spalnia | climate.konditsioner_kabinet |

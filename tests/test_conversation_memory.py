@@ -1,4 +1,5 @@
 from ha_assist_core.conversation_memory import (
+    MAX_HISTORY_MESSAGES,
     build_llm_messages,
     clear_memory,
     remember_exchange,
@@ -48,3 +49,43 @@ def test_conversation_histories_do_not_mix() -> None:
             "content": "уточнение",
         },
     ]
+
+
+def test_default_conversation_history_is_shared_for_missing_ids() -> None:
+    clear_memory()
+    remember_exchange(None, "первый вопрос", "первый ответ")
+
+    messages = build_llm_messages(None, "уточнение")
+
+    assert messages == [
+        {
+            "role": "user",
+            "content": "первый вопрос",
+        },
+        {
+            "role": "assistant",
+            "content": "первый ответ",
+        },
+        {
+            "role": "user",
+            "content": "уточнение",
+        },
+    ]
+
+
+def test_conversation_history_is_capped() -> None:
+    clear_memory()
+    for index in range(10):
+        remember_exchange("conversation-1", f"вопрос {index}", f"ответ {index}")
+
+    messages = build_llm_messages("conversation-1", "новый вопрос")
+
+    assert len(messages) == MAX_HISTORY_MESSAGES + 1
+    assert messages[0] == {
+        "role": "user",
+        "content": "вопрос 4",
+    }
+    assert messages[-1] == {
+        "role": "user",
+        "content": "новый вопрос",
+    }

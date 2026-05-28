@@ -1,4 +1,5 @@
 import pytest
+from urllib import error
 
 from ha_assist_core import llm_client
 
@@ -106,3 +107,60 @@ def test_llm_api_key_can_be_passed_directly(
 
     assert response == "ответ"
     assert captured_api_key == "direct-key"
+
+
+def test_llm_request_is_skipped_without_api_key(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_post_chat_completion(payload, api_key):
+        raise AssertionError("post_chat_completion should not be called")
+
+    monkeypatch.setattr(llm_client, "read_api_key", lambda: None)
+    monkeypatch.setattr(llm_client, "post_chat_completion", fail_post_chat_completion)
+
+    response = llm_client.generate_llm_response_sync(
+        [
+            {
+                "role": "user",
+                "content": "расскажи про луну",
+            },
+        ],
+    )
+
+    assert response is None
+
+
+@pytest.mark.parametrize(
+    "response_data",
+    [
+        {},
+        {"choices": []},
+        {"choices": [None]},
+        {"choices": [{"message": None}]},
+        {"choices": [{"message": {"content": ""}}]},
+        {"choices": [{"message": {"content": 42}}]},
+    ],
+)
+def test_extract_chat_completion_text_rejects_malformed_responses(response_data) -> None:
+    assert llm_client.extract_chat_completion_text(response_data) is None
+
+
+def test_llm_network_errors_return_none(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_post_chat_completion(payload, api_key):
+        raise error.URLError("network unavailable")
+
+    monkeypatch.setattr(llm_client, "read_api_key", lambda: "test-key")
+    monkeypatch.setattr(llm_client, "post_chat_completion", fake_post_chat_completion)
+
+    response = llm_client.generate_llm_response_sync(
+        [
+            {
+                "role": "user",
+                "content": "расскажи про луну",
+            },
+        ],
+    )
+
+    assert response is None

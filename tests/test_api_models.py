@@ -55,3 +55,23 @@ def test_assist_request_accepts_areas_and_floors() -> None:
     assert request.entities[0].attributes["forecast"] == [{"condition": "rainy"}]
     assert request.areas[0].name == "Кухня"
     assert request.floors[0].floor_id == "floor_1"
+
+
+def test_assist_request_accepts_source_location_context() -> None:
+    request = AssistRequest.model_validate(
+        {
+            "text": "выключи свет",
+            "entities": [],
+            "source_device_id": "media_player.kitchen_speaker",
+            "source_area_id": "kitchen",
+            "source_area_name": "Кухня",
+            "source_floor_id": "floor_1",
+            "source_floor_name": "Первый этаж",
+        },
+    )
+
+    assert request.source_device_id == "media_player.kitchen_speaker"
+    assert request.source_area_id == "kitchen"
+    assert request.source_area_name == "Кухня"
+    assert request.source_floor_id == "floor_1"
+    assert request.source_floor_name == "Первый этаж"
