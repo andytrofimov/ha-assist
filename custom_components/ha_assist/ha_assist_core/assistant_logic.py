@@ -217,17 +217,20 @@ def build_assist_result(
     floors = floors or []
     logger.debug("normalized: %s", command.normalized_text)
 
-    # Сцены и кнопки по полному совпадению всегда имеют первый приоритет.
-    result = handle_bare_activation(command, entity_index, context)
-    if result is not None:
-        return result
-
     custom_intent_result = custom_intents.handle_custom_intent(
         command,
         previous_exchange=previous_exchange,
     )
     if custom_intent_result is not None:
         return custom_intent_result
+
+    result = handle_bare_activation(command, entity_index, context)
+    if result is not None:
+        return result
+
+    todo_action = parse_todo_action(command, entity_index, areas, floors, context)
+    if todo_action is not None:
+        return execute_action_plan([todo_action], entity_index)
 
     if is_general_question(command):
         return llm_fallback_result()
@@ -241,10 +244,6 @@ def build_assist_result(
     )
     if result is not None:
         return result
-
-    todo_action = parse_todo_action(command, entity_index, areas, floors, context)
-    if todo_action is not None:
-        return execute_action_plan([todo_action], entity_index)
 
     action_plan = parse_action_plan(command, entity_index, areas, floors, context)
     if action_plan is None:
@@ -690,7 +689,12 @@ def extract_todo_item(text: str, match: re.Match[str]) -> str | None:
         before,
         flags=re.IGNORECASE,
     ).strip(" .,!?")
-    before = re.sub(r"\s+(?:в|во|на)$", "", before, flags=re.IGNORECASE).strip(" .,!?")
+    before = re.sub(
+        r"(?:^|\s)(?:в|во|на)$",
+        "",
+        before,
+        flags=re.IGNORECASE,
+    ).strip(" .,!?")
     return before or None
 
 
@@ -787,10 +791,30 @@ def execute_action_plan(
 
     if not service_calls:
         return AssistLogicResult(response=ResponseText.ENTITY_NOT_FOUND)
+    if len(actions) == 1 and actions[0].action == "todo_add":
+        todo_entity = entity_index.by_id.get(actions[0].todo_entity_id or "")
+        if todo_entity is not None and actions[0].todo_text:
+            return AssistLogicResult(
+                response=build_todo_added_response(
+                    actions[0].todo_text,
+                    todo_entity.name,
+                ),
+                service_calls=service_calls,
+            )
     return AssistLogicResult(
         response=ResponseText.ok(),
         service_calls=service_calls,
     )
+
+
+def build_todo_added_response(item: str, list_name: str) -> str:
+    normalized_list_name = list_name.strip()
+    if normalized_list_name:
+        normalized_list_name = (
+                normalized_list_name[0].lower()
+                + normalized_list_name[1:]
+        )
+    return f"Добавила {item} в {normalized_list_name}"
 
 
 def build_service_calls(

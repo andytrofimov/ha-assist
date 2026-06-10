@@ -7,6 +7,17 @@ from .llm_client import ChatMessage
 from .text_normalizer import NormalizedText, normalize
 
 BUG_REPORT_TODO_ENTITY_ID = "todo.spisok_dorabotok"
+CANCEL_WORDS = {
+    "отбой",
+    "отмена",
+    "стоп",
+    "хватить",
+    "прекратить",
+}
+CANCEL_PHRASES = (
+    {"не", "надо"},
+    {"не", "нужно"},
+)
 
 
 @dataclass(frozen=True)
@@ -24,10 +35,24 @@ def handle_custom_intent(
         command: NormalizedText,
         previous_exchange: list[ChatMessage] | None = None,
 ) -> AssistLogicResult | None:
+    cancel_result = handle_cancel_intent(command)
+    if cancel_result is not None:
+        return cancel_result
+
     request_normalized = command.normalized_text.strip()
     for intent in CUSTOM_INTENTS:
         if request_normalized in intent.normalized_phrases:
             return intent.handler(command, previous_exchange or [])
+    return None
+
+
+def handle_cancel_intent(command: NormalizedText) -> AssistLogicResult | None:
+    if not command.tokens or len(command.tokens) >= 3:
+        return None
+
+    words = set(command.normal_forms) | set(command.tokens)
+    if words & CANCEL_WORDS or any(phrase <= words for phrase in CANCEL_PHRASES):
+        return AssistLogicResult()
     return None
 
 
