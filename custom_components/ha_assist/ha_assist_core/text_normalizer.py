@@ -1,15 +1,17 @@
 from functools import lru_cache
 
 from natasha import Doc, MorphVocab, NewsEmbedding, NewsMorphTagger, Segmenter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class NormalizedText(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     original_text: str
-    tokens: list[str]
-    normal_forms: list[str]
+    tokens: tuple[str, ...]
+    normal_forms: tuple[str, ...]
     normalized_text: str
-    state_forms: list[str] = Field(default_factory=list)
+    state_forms: tuple[str, ...] = ()
 
 
 class AgreementFeatures(BaseModel):
@@ -108,7 +110,29 @@ def state_predicate_form(token) -> str | None:
     return None
 
 
+STOP_WORDS = {
+    "пожалуйста",
+    "сейчас",
+    "немедленно",
+    "быстро",
+    "срочно",
+    "ну",
+    "давай",
+}
+
+
+# Возвращает нормализованный текст без общих слов, например "сейчас"
+def remove_generic_words(text: NormalizedText) -> str:
+    return " ".join(
+        word for word in text.normal_forms
+        if word not in STOP_WORDS
+    )
+
+
+@lru_cache(maxsize=8192)
 def normalize(text: str) -> NormalizedText:
+    # Результат нормализации не изменяется после создания, поэтому его можно
+    # переиспользовать для стабильных имен entity, alias и локаций.
     return get_text_normalizer().normalize(text)
 
 

@@ -1,13 +1,10 @@
-import re
 from dataclasses import dataclass
 from typing import Any
 
 from .ha_parser import HaObject
 from .number_parser import (
-    parse_brightness_percent,
     parse_delay_seconds,
     parse_duration_seconds,
-    parse_temperature,
 )
 from .text_normalizer import NormalizedText
 
@@ -27,67 +24,13 @@ TURNABLE_DOMAINS = {
     "vacuum",
 }
 
-# Домены, которым разрешено срабатывать без явного командного глагола.
-BARE_ACTIVATION_DOMAINS = {"button", "scene"}
-
-# Командные глаголы сравниваются после морфологической нормализации.
-TURN_ON_WORDS = {"включить", "включи", "активировать", "активируй", "запустить", "запусти"}
-TURN_OFF_WORDS = {"выключить", "выключи", "отключить", "отключи"}
-OPEN_WORDS = {"открыть", "открой"}
-CLOSE_WORDS = {"закрыть", "закрой"}
-ADD_TODO_WORDS = {"добавить", "добавь"}
-UNSUPPORTED_ACTION_WORDS = {"показать"}
-
-
 @dataclass(frozen=True)
 class ParsedTiming:
     delay_seconds: int | None = None
     duration_seconds: int | None = None
 
-
-def detect_action(command: NormalizedText) -> str | None:
-    words = set(command.normal_forms) | set(command.tokens)
-    if words & TURN_ON_WORDS:
-        return "turn_on"
-    if words & TURN_OFF_WORDS:
-        return "turn_off"
-    if words & OPEN_WORDS:
-        return "open"
-    if words & CLOSE_WORDS:
-        return "close"
-    if words & ADD_TODO_WORDS:
-        return "add_todo"
-    if {"поставить", "установить"} & words and parse_brightness_percent(command):
-        return "turn_on"
-    if {"поставить", "установить"} & words and parse_temperature(command):
-        return "set_temperature"
-    return None
-
-
-def is_invalid_device_command(command: NormalizedText) -> bool:
-    words = set(command.normal_forms) | set(command.tokens)
-    if "кроме" in words or "не" in words:
-        return True
-    if (words & TURN_ON_WORDS) and (words & TURN_OFF_WORDS):
-        return True
-    if (words & OPEN_WORDS) and (words & CLOSE_WORDS):
-        return True
-    stripped_text = command.original_text.strip().lower()
-    if stripped_text.endswith((" и", " через")):
-        return True
-    return False
-
-
-def has_unsupported_action(command: NormalizedText) -> bool:
-    return bool((set(command.normal_forms) | set(command.tokens)) & UNSUPPORTED_ACTION_WORDS)
-
-
 def is_turnable(entity: HaObject) -> bool:
     return entity_domain(entity) in TURNABLE_DOMAINS
-
-
-def is_bare_activation_domain(entity: HaObject) -> bool:
-    return entity_domain(entity) in BARE_ACTIVATION_DOMAINS
 
 
 def bare_activation_action(entity: HaObject) -> str | None:
@@ -102,8 +45,8 @@ def bare_activation_action(entity: HaObject) -> str | None:
 def build_service_call(
         entity: HaObject,
         action: str,
-        brightness_pct: int | None,
-        delay_seconds: int | None,
+        brightness_pct: int | None = None,
+        delay_seconds: int | None = None,
         target_temperature: int | None = None,
         todo_item: str | None = None,
 ) -> dict[str, Any] | None:
@@ -194,17 +137,3 @@ def parse_timing(command: NormalizedText) -> ParsedTiming:
     delay_seconds = parse_delay_seconds(command)
     duration_seconds = parse_duration_seconds(command)
     return ParsedTiming(delay_seconds=delay_seconds, duration_seconds=duration_seconds)
-
-
-def parse_todo_item(command: NormalizedText, entity: HaObject, raw_entity_phrases: list[str]) -> str | None:
-    if entity_domain(entity) != "todo":
-        return None
-
-    for phrase in sorted(raw_entity_phrases, key=len, reverse=True):
-        match = re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", command.original_text, re.I)
-        if match is None:
-            continue
-        item = command.original_text[match.end():].strip(" .,!?")
-        return item or None
-
-    return None

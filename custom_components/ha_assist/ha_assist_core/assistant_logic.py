@@ -1,34 +1,41 @@
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
+from . import custom_intents, device_command, location_resolver, state_query
 from .assistant_result import (
     AssistLogicResult,
     ResponseText,
     llm_fallback_result,
     strip_trailing_period,
 )
-from . import custom_intents
 from .ha_parser import HaObject
 from .llm_client import ChatMessage, generate_llm_response
-from . import device_command, location_resolver, state_query
-from .number_parser import (
-    parse_brightness_percent,
-    parse_temperature,
-)
+from .number_parser import parse_brightness_percent, parse_temperature
 from .text_normalizer import (
+    NormalizedText,
     normalize,
-    normalized_form_words,
-    normalized_token_words,
     normalized_words,
     split_aliases,
-    NormalizedText,
 )
 
 logger = logging.getLogger(__name__)
 
-# Общие слова не должны сами по себе повышать точность совпадения с entity.
+ActionKind = Literal[
+    "turn_on",
+    "turn_off",
+    "open",
+    "close",
+    "set_temperature",
+    "todo_add",
+]
+
+BARE_ACTIVATION_DOMAINS = {"button", "scene"}
+STATE_ONLY_DOMAINS = {"binary_sensor", "sensor", "todo", "weather"}
+TEMPERATURE_UNITS = {"°", "°C", "°F"}
+
+# Эти слова не должны превращать комнату, параметр или глагол в имя устройства.
 GENERIC_WORDS = {
     "в",
     "во",
@@ -46,38 +53,44 @@ GENERIC_WORDS = {
     "какие",
     "сколько",
     "сейчас",
+    "состояние",
     "процент",
-    "процентов",
+    "градус",
     "включить",
     "включи",
     "выключить",
     "выключи",
+    "отключить",
+    "отключи",
     "добавить",
     "добавь",
+    "напомнить",
+    "напомни",
     "открыть",
     "открой",
     "закрыть",
     "закрой",
     "активировать",
+    "активируй",
     "запустить",
+    "запусти",
     "поставить",
+    "поставь",
     "установить",
-    "сделать",
+    "установи",
     "через",
+    "кроме",
     "минута",
-    "минут",
+    "секунда",
     "час",
-    "часа",
     "полчаса",
     "этаж",
     *location_resolver.ALL_WORDS,
     *location_resolver.ALL_LOCATIONS_WORDS,
 }
 
-# Общие пользовательские названия доменов. Они работают только если в HA payload
-# есть сущности этого домена, и не считаются специфичным остатком для broad fallback.
 DOMAIN_REQUEST_WORDS = {
-    "automation": {"автоматизация", "автоматизации"},
+    "automation": {"автоматизация"},
     "binary_sensor": {"датчик", "сенсор"},
     "button": {"кнопка"},
     "climate": {
@@ -95,7 +108,6 @@ DOMAIN_REQUEST_WORDS = {
         "рольставни",
         "ставни",
         "штора",
-        "шторы",
     },
     "fan": {"вентилятор"},
     "humidifier": {"увлажнитель"},
@@ -109,7 +121,7 @@ DOMAIN_REQUEST_WORDS = {
         "свет",
         "светильник",
     },
-    "media_player": {"колонка", "медиаплеер", "плеер", "телевизор"},
+    "media_player": {"колонка", "медиаплеер", "плеер", "телевизор", "телек"},
     "remote": {"пульт"},
     "scene": {"режим", "сцена"},
     "script": {"скрипт", "сценарий"},
@@ -118,11 +130,68 @@ DOMAIN_REQUEST_WORDS = {
     "vacuum": {"пылесос"},
 }
 
+# Эти слова означают весь домен, а не конкретный вид сущности внутри домена.
+BROAD_DOMAIN_WORDS = {
+    "light": {"свет", "освещение"},
+    "climate": {"климат"},
+}
+
+STATE_CATEGORY_WORDS = {
+    "temperature": {"температура"},
+    "door": {"дверь"},
+    "window": {"окно"},
+    "gate": {"ворота"},
+    "humidity": {"влажность"},
+    "weather": {"погода"},
+}
+
+ACTION_START_PATTERN = re.compile(
+    r"\s+и\s+(?=(?:включ|выключ|отключ|откро|закро|активир|запуст|постав|установ|добав|напом))",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
-class EntityMatch:
-    entity: HaObject
-    score: int
+class RequestContext:
+    source_area_id: str | None = None
+    source_area_name: str | None = None
+    source_floor_id: str | None = None
+    source_floor_name: str | None = None
+
+
+@dataclass(frozen=True)
+class EntityIndex:
+    entities: list[HaObject]
+    by_id: dict[str, HaObject]
+    by_domain: dict[str, tuple[HaObject, ...]]
+    domains: frozenset[str]
+    normalized_names: dict[str, tuple[str, ...]]
+    raw_names: dict[str, tuple[str, ...]]
+    name_words: dict[str, frozenset[str]]
+    normalized_area_names: dict[str, str]
+    location_words: frozenset[str]
+
+
+@dataclass
+class ParsedAction:
+    raw_text: str
+    command: NormalizedText
+    action: ActionKind
+    target_domains: set[str]
+    target_entity_ids: set[str]
+    category_words: set[str]
+    location_context: location_resolver.LocationContext
+    excluded_area_ids: set[str]
+    excluded_floor_ids: set[str]
+    all_locations: bool
+    broad_target: bool
+    delay_seconds: int | None = None
+    duration_seconds: int | None = None
+    brightness_percent: int | None = None
+    temperature: int | None = None
+    todo_text: str | None = None
+    todo_entity_id: str | None = None
+    error_response: str | None = None
 
 
 def build_assist_result(
@@ -136,252 +205,52 @@ def build_assist_result(
         source_floor_name: str | None = None,
         previous_exchange: list[ChatMessage] | None = None,
 ) -> AssistLogicResult:
-    normalized_request = normalize(text)
+    command = normalize(text)
+    entity_index = build_entity_index(ha_objects)
+    context = RequestContext(
+        source_area_id=source_area_id,
+        source_area_name=source_area_name,
+        source_floor_id=source_floor_id,
+        source_floor_name=source_floor_name,
+    )
+    areas = areas or []
+    floors = floors or []
+    logger.debug("normalized: %s", command.normalized_text)
+
+    # Сцены и кнопки по полному совпадению всегда имеют первый приоритет.
+    result = handle_bare_activation(command, entity_index, context)
+    if result is not None:
+        return result
+
     custom_intent_result = custom_intents.handle_custom_intent(
-        normalized_request,
+        command,
         previous_exchange=previous_exchange,
     )
     if custom_intent_result is not None:
         return custom_intent_result
 
-    command_parts = split_compound_commands(normalized_request.original_text)
-    all_service_calls: list[dict[str, Any]] = []
-    state_answers: list[str] = []
-    found_smart_home_signal = False
+    if is_general_question(command):
+        return llm_fallback_result()
 
-    for command_text in command_parts:
-        command = normalize(command_text)
-        action = device_command.detect_action(command)
-        timing = device_command.parse_timing(command)
-        brightness_pct = parse_brightness_percent(command)
-        target_temperature = parse_temperature(command)
-        requested_domains = detect_requested_domains(command, ha_objects)
-        location_context = location_resolver.detect_location_context(
-            command=command,
-            ha_objects=ha_objects,
-            areas=areas or [],
-            floors=floors or [],
-            source_area_id=source_area_id,
-            source_area_name=source_area_name,
-            source_floor_id=source_floor_id,
-            source_floor_name=source_floor_name,
-            generic_words=GENERIC_WORDS,
-        )
-
-        bare_activation_result = build_bare_activation_result(
-            command=command,
-            ha_objects=ha_objects,
-            location_context=location_context,
-        )
-        if bare_activation_result is not None:
-            if bare_activation_result.service_calls:
-                all_service_calls.extend(bare_activation_result.service_calls)
-                found_smart_home_signal = True
-                continue
-            return bare_activation_result
-
-        todo_matches = find_todo_item_matches(command, ha_objects)
-        if todo_matches:
-            action = "add_todo"
-            matches = todo_matches
-        else:
-            matches = find_entity_matches(
-                command,
-                ha_objects,
-                location_context=location_context,
-            )
-
-        found_smart_home_signal = (
-                found_smart_home_signal
-                or action is not None
-                or bool(matches)
-                or bool(requested_domains)
-                or location_context.has_location
-        )
-
-        if is_general_question(command):
-            return llm_fallback_result()
-
-        if action != "add_todo" and state_query.is_state_query(command):
-            if not matches:
-                if not found_smart_home_signal or not location_context.has_explicit_location:
-                    return llm_fallback_result()
-                return AssistLogicResult(response=ResponseText.ENTITY_NOT_FOUND)
-            if (
-                    action is None
-                    and not location_context.has_explicit_location
-                    and all(
-                device_command.entity_domain(match.entity) in state_query.STATE_ONLY_DOMAINS
-                for match in matches
-            )
-                    and has_unmatched_state_query_words(command, matches)
-            ):
-                return llm_fallback_result()
-            state_answers.extend(
-                state_query.build_state_answer(
-                    match.entity,
-                    command,
-                    normalized_words(command),
-                )
-                for match in matches
-            )
-            continue
-
-        if action != "add_todo" and device_command.is_invalid_device_command(command):
-            if found_smart_home_signal:
-                return AssistLogicResult(response=ResponseText.ACTION_NOT_FOUND)
-            return llm_fallback_result()
-
-        if action is None and device_command.has_unsupported_action(command):
-            return llm_fallback_result()
-
-        if action is None and matches:
-            if all(device_command.entity_domain(match.entity) in state_query.STATE_ONLY_DOMAINS for match in matches):
-                state_answers.extend(
-                    state_query.build_state_answer(
-                        match.entity,
-                        command,
-                        normalized_words(command),
-                    )
-                    for match in matches
-                )
-                continue
-
-        if action is None:
-            if found_smart_home_signal:
-                return AssistLogicResult(response=ResponseText.ACTION_NOT_FOUND)
-            return llm_fallback_result()
-
-        if action != "add_todo" and location_resolver.has_unknown_floor(command, ha_objects, floors or [],
-                                                                        GENERIC_WORDS):
-            return AssistLogicResult(response=ResponseText.FLOOR_NOT_FOUND)
-        if action != "add_todo" and location_resolver.has_unknown_location(
-                command,
-                ha_objects,
-                areas or [],
-                floors or [],
-                GENERIC_WORDS,
-        ):
-            return AssistLogicResult(response=ResponseText.AREA_NOT_FOUND)
-
-        if not matches:
-            return AssistLogicResult(response=ResponseText.ENTITY_NOT_FOUND)
-
-        if (
-                location_resolver.is_ambiguous_location(matches, location_context)
-                and not is_all_domain_request(normalized_words(command), requested_domains)
-        ):
-            return AssistLogicResult(response=ResponseText.AMBIGUOUS_AREA)
-
-        for match in matches:
-            service_call = device_command.build_service_call(
-                entity=match.entity,
-                action=action,
-                brightness_pct=brightness_pct,
-                target_temperature=target_temperature,
-                todo_item=(
-                    device_command.parse_todo_item(
-                        command,
-                        match.entity,
-                        raw_entity_phrases(match.entity),
-                    )
-                    if action == "add_todo" else None
-                ),
-                delay_seconds=timing.delay_seconds,
-            )
-            if service_call is None:
-                continue
-
-            all_service_calls.append(service_call)
-            reverse_call = device_command.build_reverse_service_call(
-                entity=match.entity,
-                action=action,
-                delay_seconds=timing.duration_seconds,
-            )
-            if reverse_call is not None:
-                all_service_calls.append(reverse_call)
-
-    if all_service_calls:
-        return AssistLogicResult(
-            response=ResponseText.ok(),
-            service_calls=all_service_calls,
-        )
-
-    if state_answers:
-        return AssistLogicResult(response="; ".join(state_answers))
-
-    return llm_fallback_result()
-
-
-def build_bare_activation_result(
-        command: NormalizedText,
-        ha_objects: list[HaObject],
-        location_context: location_resolver.LocationContext,
-) -> AssistLogicResult | None:
-    matches = exact_bare_activation_matches(command, ha_objects, location_context)
-    if not matches:
-        return None
-    if len(matches) > 1:
-        return AssistLogicResult(response=ResponseText.AMBIGUOUS_AREA)
-
-    entity = matches[0].entity
-    action = device_command.bare_activation_action(entity)
-    if action is None:
-        return None
-    service_call = device_command.build_service_call(
-        entity=entity,
-        action=action,
-        brightness_pct=None,
-        target_temperature=None,
-        todo_item=None,
-        delay_seconds=None,
+    result = handle_state_request(
+        command,
+        entity_index,
+        areas,
+        floors,
+        context,
     )
-    if service_call is None:
-        return None
-    return AssistLogicResult(
-        response=ResponseText.ok(),
-        service_calls=[service_call],
-    )
+    if result is not None:
+        return result
 
+    todo_action = parse_todo_action(command, entity_index, areas, floors, context)
+    if todo_action is not None:
+        return execute_action_plan([todo_action], entity_index)
 
-def exact_bare_activation_matches(
-        command: NormalizedText,
-        ha_objects: list[HaObject],
-        location_context: location_resolver.LocationContext,
-) -> list[EntityMatch]:
-    request_raw = command.original_text.strip(" .,!?").lower()
-    request_normalized = command.normalized_text.strip()
-    search_objects = location_resolver.filter_entities_by_location(ha_objects, location_context)
-    matches: list[EntityMatch] = []
-    for entity in search_objects:
-        if not device_command.is_bare_activation_domain(entity):
-            continue
-        if request_normalized in entity_phrases(entity) or request_raw in raw_entity_phrases(entity):
-            matches.append(EntityMatch(entity=entity, score=100))
-    return matches
+    action_plan = parse_action_plan(command, entity_index, areas, floors, context)
+    if action_plan is None:
+        return llm_fallback_result()
 
-
-def find_todo_item_matches(command: NormalizedText, ha_objects: list[HaObject]) -> list[EntityMatch]:
-    candidates: list[tuple[EntityMatch, bool]] = []
-    for entity in ha_objects:
-        if device_command.entity_domain(entity) != "todo":
-            continue
-        for phrase in sorted(raw_entity_phrases(entity), key=len, reverse=True):
-            match = re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", command.original_text, re.I)
-            if match is None:
-                continue
-            item = command.original_text[match.end():].strip(" .,!?")
-            candidates.append((EntityMatch(entity=entity, score=100 + len(phrase.split())), bool(item)))
-            break
-
-    if not candidates:
-        return []
-    best_score = max(match.score for match, _ in candidates)
-    return [
-        match
-        for match, has_item in candidates
-        if match.score == best_score and has_item
-    ]
+    return execute_action_plan(action_plan, entity_index)
 
 
 async def build_assist_result_with_llm(
@@ -411,484 +280,902 @@ async def build_assist_result_with_llm(
     if not result.fallback_to_llm:
         return result
 
-    messages = llm_messages or [
-        {
-            "role": "user",
-            "content": text,
-        },
-    ]
+    messages = llm_messages or [{"role": "user", "content": text}]
     logger.info("LLM fallback requested for non-smart-home text: %s", text)
     llm_response = await generate_llm_response(messages, api_key=llm_api_key)
     if llm_response is None:
-        logger.info("LLM fallback did not return a response")
         return result
-
     return AssistLogicResult(response=strip_trailing_period(llm_response))
 
 
-def split_compound_commands(text: str) -> list[str]:
-    # Делим только там, где после союза явно начинается новая команда.
-    parts = re.split(
-        r"\s+и\s+(?=(?:включ|выключ|отключ|откро|закро|активир|запуст|постав|установ))",
-        text,
-        flags=re.IGNORECASE,
+def handle_bare_activation(
+        command: NormalizedText,
+        entity_index: EntityIndex,
+        context: RequestContext,
+) -> AssistLogicResult | None:
+    request = command.normalized_text.strip()
+    matches = [
+        entity
+        for entity in entity_index.entities
+        if entity_domain(entity) in BARE_ACTIVATION_DOMAINS
+           and request in entity_index.normalized_names[entity.entity_id]
+    ]
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return build_bare_activation_result(matches[0])
+
+    filtered = filter_by_source_room(matches, entity_index, context)
+    if len(filtered) == 1:
+        return build_bare_activation_result(filtered[0])
+    if not filtered:
+        return AssistLogicResult(response=ResponseText.ENTITY_NOT_FOUND)
+    return AssistLogicResult(response=ResponseText.AMBIGUOUS_AREA)
+
+
+def build_bare_activation_result(entity: HaObject) -> AssistLogicResult:
+    action = device_command.bare_activation_action(entity)
+    service_call = device_command.build_service_call(entity=entity, action=action or "")
+    if service_call is None:
+        return AssistLogicResult(response=ResponseText.ENTITY_NOT_FOUND)
+    return AssistLogicResult(
+        response=ResponseText.ok(),
+        service_calls=[service_call],
     )
-    return [part.strip(" .,!?") for part in parts if part.strip(" .,!?")]
+
+
+def handle_state_request(
+        command: NormalizedText,
+        entity_index: EntityIndex,
+        areas: list[Any],
+        floors: list[Any],
+        context: RequestContext,
+) -> AssistLogicResult | None:
+    if not looks_like_state_request(command, entity_index):
+        return None
+
+    location_context = detect_location_context(
+        command,
+        entity_index.entities,
+        areas,
+        floors,
+        context,
+    )
+    matches = find_state_candidates(command, entity_index)
+    if location_context.has_explicit_location:
+        matches = [
+            entity
+            for entity in matches
+            if location_resolver.entity_in_location(entity, location_context)
+        ]
+        if not matches:
+            return AssistLogicResult(response=ResponseText.ENTITY_NOT_FOUND)
+
+    category_request = bool(
+        normalized_words(command)
+        & set().union(*STATE_CATEGORY_WORDS.values())
+    )
+    if location_context.has_location and (len(matches) > 1 or category_request):
+        room_matches = [
+            entity
+            for entity in matches
+            if location_resolver.entity_in_location(entity, location_context)
+        ]
+        if room_matches:
+            matches = room_matches
+        elif category_request:
+            return AssistLogicResult(response=ResponseText.ENTITY_NOT_FOUND)
+
+    if len(matches) != 1:
+        if matches:
+            return AssistLogicResult(response=ResponseText.ENTITY_NOT_FOUND)
+        return None
+
+    answer = state_query.build_state_answer(
+        matches[0],
+        command,
+        normalized_words(command),
+    )
+    return AssistLogicResult(response=strip_trailing_period(answer))
+
+
+def looks_like_state_request(command: NormalizedText, entity_index: EntityIndex) -> bool:
+    if state_query.is_state_query(command):
+        return True
+    if detect_action(command) is not None:
+        return False
+    request = command.normalized_text.strip()
+    return any(
+        entity_domain(entity) in STATE_ONLY_DOMAINS
+        and any(
+            contains_phrase(request, phrase)
+            for phrase in entity_index.normalized_names[entity.entity_id]
+        )
+        for entity in entity_index.entities
+    )
+
+
+def find_state_candidates(
+        command: NormalizedText,
+        entity_index: EntityIndex,
+) -> list[HaObject]:
+    request_words = normalized_words(command)
+    scored: list[tuple[int, HaObject]] = []
+    for entity in entity_index.entities:
+        score = state_entity_score(
+            entity,
+            command,
+            request_words,
+            entity_index,
+        )
+        if score is not None:
+            scored.append((score, entity))
+
+    if not scored:
+        return []
+    best_score = max(score for score, _ in scored)
+    return [entity for score, entity in scored if score == best_score]
+
+
+def state_entity_score(
+        entity: HaObject,
+        command: NormalizedText,
+        request_words: set[str],
+        entity_index: EntityIndex,
+) -> int | None:
+    phrases = entity_index.normalized_names[entity.entity_id]
+    for phrase in phrases:
+        if contains_phrase(command.normalized_text, phrase):
+            return 120 + len(phrase.split())
+
+    category_score = state_category_score(entity, request_words, entity_index)
+    phrase_words = entity_index.name_words[entity.entity_id]
+    specific_words = phrase_words - GENERIC_WORDS - entity_index.location_words
+    matched_words = request_words & specific_words
+    if matched_words:
+        return max(category_score or 0, 70 + (10 * len(matched_words)))
+    return category_score
+
+
+def state_category_score(
+        entity: HaObject,
+        request_words: set[str],
+        entity_index: EntityIndex,
+) -> int | None:
+    if (
+            request_words & STATE_CATEGORY_WORDS["temperature"]
+            and is_temperature_entity(entity, entity_index)
+    ):
+        return 80
+    if (
+            request_words & STATE_CATEGORY_WORDS["humidity"]
+            and is_humidity_entity(entity, entity_index)
+    ):
+        return 80
+    if request_words & STATE_CATEGORY_WORDS["weather"] and entity_domain(entity) == "weather":
+        return 80
+
+    entity_words = entity_index.name_words[entity.entity_id]
+    device_class = (entity.device_class or "").lower()
+    if request_words & STATE_CATEGORY_WORDS["door"]:
+        if "дверь" in entity_words or device_class in {"door", "opening"}:
+            return 80
+    if request_words & STATE_CATEGORY_WORDS["window"]:
+        if "окно" in entity_words or device_class == "window":
+            return 80
+    if request_words & STATE_CATEGORY_WORDS["gate"]:
+        if "ворота" in entity_words or device_class == "garage_door":
+            return 80
+    return None
+
+
+def is_temperature_entity(entity: HaObject, entity_index: EntityIndex) -> bool:
+    return bool(
+        entity_domain(entity) == "sensor"
+        and (
+                entity.device_class == "temperature"
+                or entity.unit_of_measurement in TEMPERATURE_UNITS
+                or "температура" in entity_index.name_words[entity.entity_id]
+        )
+    )
+
+
+def is_humidity_entity(entity: HaObject, entity_index: EntityIndex) -> bool:
+    return bool(
+        entity_domain(entity) == "sensor"
+        and (
+                entity.device_class == "humidity"
+                or "влажность" in entity_index.name_words[entity.entity_id]
+        )
+    )
+
+
+def parse_action_plan(
+        command: NormalizedText,
+        entity_index: EntityIndex,
+        areas: list[Any],
+        floors: list[Any],
+        context: RequestContext,
+) -> list[ParsedAction] | None:
+    parts = split_action_parts(command)
+    actions: list[ParsedAction] = []
+    for part in parts:
+        action = parse_action_part(part, entity_index, areas, floors, context)
+        if action is None:
+            return None
+        actions.append(action)
+    return actions or None
+
+
+def split_action_parts(command: NormalizedText) -> list[NormalizedText]:
+    parts = [
+        part.strip(" .,!?")
+        for part in ACTION_START_PATTERN.split(command.original_text)
+        if part.strip(" .,!?")
+    ]
+    return [normalize(part) for part in parts]
+
+
+def parse_action_part(
+        command: NormalizedText,
+        entity_index: EntityIndex,
+        areas: list[Any],
+        floors: list[Any],
+        context: RequestContext,
+) -> ParsedAction | None:
+    action = detect_action(command)
+    if action is None or action == "todo_add":
+        return None
+
+    include_command, exclude_command = split_exclusion(command)
+    location_context = detect_location_context(
+        include_command,
+        entity_index.entities,
+        areas,
+        floors,
+        context,
+    )
+    error_response = detect_location_error(
+        include_command,
+        entity_index.entities,
+        areas,
+        floors,
+    )
+    excluded_area_ids: set[str] = set()
+    excluded_floor_ids: set[str] = set()
+    if exclude_command is not None:
+        excluded_context = detect_location_context(
+            exclude_command,
+            entity_index.entities,
+            areas,
+            floors,
+            RequestContext(),
+        )
+        if excluded_context.explicit_area:
+            excluded_area_ids = excluded_context.area_ids
+        elif excluded_context.explicit_floor:
+            excluded_floor_ids = excluded_context.floor_ids
+        if not excluded_context.has_explicit_location:
+            error_response = ResponseText.AREA_NOT_FOUND
+
+    target_domains = detect_target_domains(command, entity_index)
+    category_words = domain_words_in_request(command, target_domains)
+    target_entity_ids = {
+        entity.entity_id
+        for entity in find_exact_action_entities(command, entity_index, target_domains)
+    }
+    all_locations = is_all_locations_action(command, location_context, exclude_command)
+    broad_target = bool(
+        all_locations
+        or not target_entity_ids
+        or (
+                category_words
+                and not has_specific_target_words(
+            command,
+            category_words,
+            entity_index,
+        )
+        )
+    )
+    timing = device_command.parse_timing(command)
+    temperature = parse_temperature(command)
+    if action == "set_temperature":
+        target_domains = {"climate"} if "climate" in entity_index.domains else set()
+
+    return ParsedAction(
+        raw_text=command.original_text,
+        command=command,
+        action=action,
+        target_domains=target_domains,
+        target_entity_ids=target_entity_ids,
+        category_words=category_words,
+        location_context=location_context,
+        excluded_area_ids=excluded_area_ids,
+        excluded_floor_ids=excluded_floor_ids,
+        all_locations=all_locations,
+        broad_target=broad_target,
+        delay_seconds=timing.delay_seconds,
+        duration_seconds=timing.duration_seconds,
+        brightness_percent=parse_brightness_percent(command),
+        temperature=temperature,
+        error_response=error_response,
+    )
+
+
+def parse_todo_action(
+        command: NormalizedText,
+        entity_index: EntityIndex,
+        areas: list[Any],
+        floors: list[Any],
+        context: RequestContext,
+) -> ParsedAction | None:
+    if not normalized_words(command) & {"добавить", "добавь", "напомнить", "напомни"}:
+        return None
+
+    candidates: list[tuple[int, HaObject, str | None]] = []
+    for entity in entity_index.by_domain.get("todo", ()):
+        if entity_domain(entity) != "todo":
+            continue
+        for phrase in entity_index.raw_names[entity.entity_id]:
+            match = re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", command.original_text, re.IGNORECASE)
+            if match is None:
+                continue
+            item = extract_todo_item(command.original_text, match)
+            candidates.append((len(phrase.split()), entity, item))
+
+    if not candidates:
+        return None
+    best_score = max(score for score, _, _ in candidates)
+    best = [
+        (entity, item)
+        for score, entity, item in candidates
+        if score == best_score
+    ]
+    if len(best) != 1:
+        return ParsedAction(
+            raw_text=command.original_text,
+            command=command,
+            action="todo_add",
+            target_domains={"todo"},
+            target_entity_ids=set(),
+            category_words=set(),
+            location_context=detect_location_context(
+                command,
+                entity_index.entities,
+                areas,
+                floors,
+                context,
+            ),
+            excluded_area_ids=set(),
+            excluded_floor_ids=set(),
+            all_locations=False,
+            broad_target=False,
+            error_response=ResponseText.ENTITY_NOT_FOUND,
+        )
+
+    entity, item = best[0]
+    return ParsedAction(
+        raw_text=command.original_text,
+        command=command,
+        action="todo_add",
+        target_domains={"todo"},
+        target_entity_ids={entity.entity_id},
+        category_words=set(),
+        location_context=detect_location_context(
+            command,
+            entity_index.entities,
+            areas,
+            floors,
+            context,
+        ),
+        excluded_area_ids=set(),
+        excluded_floor_ids=set(),
+        all_locations=False,
+        broad_target=False,
+        todo_text=item,
+        todo_entity_id=entity.entity_id,
+        error_response=None if item else ResponseText.ACTION_NOT_FOUND,
+    )
+
+
+def extract_todo_item(text: str, match: re.Match[str]) -> str | None:
+    before = text[:match.start()].strip(" .,!?")
+    after = text[match.end():].strip(" .,!?")
+    if after:
+        return after
+
+    before = re.sub(
+        r"^\s*(?:добавь|добавить|напомни|напомнить)\s+",
+        "",
+        before,
+        flags=re.IGNORECASE,
+    ).strip(" .,!?")
+    before = re.sub(r"\s+(?:в|во|на)$", "", before, flags=re.IGNORECASE).strip(" .,!?")
+    return before or None
+
+
+def detect_action(command: NormalizedText) -> ActionKind | None:
+    words = normalized_words(command)
+    temperature = parse_temperature(command)
+    brightness = parse_brightness_percent(command)
+    if words & {"добавить", "добавь", "напомнить", "напомни"}:
+        return "todo_add"
+    if temperature is not None and words & {
+        "включить",
+        "включи",
+        "поставить",
+        "поставь",
+        "установить",
+        "установи",
+    }:
+        return "set_temperature"
+    if words & {"включить", "включи", "активировать", "активируй", "запустить", "запусти"}:
+        return "turn_on"
+    if words & {"выключить", "выключи", "отключить", "отключи"}:
+        return "turn_off"
+    if words & {"открыть", "открой"}:
+        return "open"
+    if words & {"закрыть", "закрой"}:
+        return "close"
+    if brightness is not None and words & {"поставить", "поставь", "установить", "установи"}:
+        return "turn_on"
+    return None
+
+
+def detect_target_domains(
+        command: NormalizedText,
+        entity_index: EntityIndex,
+) -> set[str]:
+    request_words = normalized_words(command)
+    domains: set[str] = set()
+    available_domains = entity_index.domains
+    for domain, words in DOMAIN_REQUEST_WORDS.items():
+        if domain in available_domains and request_words & words:
+            domains.add(domain)
+
+    for entity in entity_index.entities:
+        entity_words = (
+                entity_index.name_words[entity.entity_id]
+                - GENERIC_WORDS
+                - entity_index.location_words
+        )
+        if request_words & entity_words:
+            domains.add(entity_domain(entity))
+
+    if request_words & {"отопление", "обогрев", "подогрев"}:
+        if "climate" in available_domains:
+            domains.add("climate")
+    return domains
+
+
+def find_exact_action_entities(
+        command: NormalizedText,
+        entity_index: EntityIndex,
+        target_domains: set[str],
+) -> list[HaObject]:
+    scored: list[tuple[int, HaObject]] = []
+    non_bare_domains = target_domains - BARE_ACTIVATION_DOMAINS
+    for entity in entity_index.entities:
+        domain = entity_domain(entity)
+        if target_domains and domain not in target_domains:
+            continue
+        if domain in BARE_ACTIVATION_DOMAINS and non_bare_domains:
+            continue
+        for phrase in entity_index.normalized_names[entity.entity_id]:
+            if contains_phrase(command.normalized_text, phrase):
+                scored.append((100 + len(phrase.split()), entity))
+                break
+
+    if not scored:
+        return []
+    best_score = max(score for score, _ in scored)
+    return [entity for score, entity in scored if score == best_score]
+
+
+def execute_action_plan(
+        actions: list[ParsedAction],
+        entity_index: EntityIndex,
+) -> AssistLogicResult:
+    service_calls: list[dict[str, Any]] = []
+    for action in actions:
+        if action.error_response:
+            return AssistLogicResult(response=action.error_response)
+        calls, error_response = build_service_calls(action, entity_index)
+        if error_response:
+            return AssistLogicResult(response=error_response)
+        service_calls.extend(calls)
+
+    if not service_calls:
+        return AssistLogicResult(response=ResponseText.ENTITY_NOT_FOUND)
+    return AssistLogicResult(
+        response=ResponseText.ok(),
+        service_calls=service_calls,
+    )
+
+
+def build_service_calls(
+        action: ParsedAction,
+        entity_index: EntityIndex,
+) -> tuple[list[dict[str, Any]], str | None]:
+    if action.action == "todo_add":
+        entity = entity_index.by_id.get(action.todo_entity_id or "")
+        if entity is None or not action.todo_text:
+            return [], ResponseText.ENTITY_NOT_FOUND
+        service_call = device_command.build_service_call(
+            entity=entity,
+            action="add_todo",
+            todo_item=action.todo_text,
+        )
+        return ([service_call] if service_call else []), None
+
+    targets = resolve_action_targets(action, entity_index)
+    if not targets:
+        return [], ResponseText.ENTITY_NOT_FOUND
+    if is_ambiguous_action_target(action, targets):
+        return [], ResponseText.AMBIGUOUS_AREA
+
+    service_calls: list[dict[str, Any]] = []
+    for entity in targets:
+        service_call = device_command.build_service_call(
+            entity=entity,
+            action=action.action,
+            brightness_pct=action.brightness_percent,
+            target_temperature=action.temperature,
+            delay_seconds=action.delay_seconds,
+        )
+        if service_call is None:
+            continue
+        service_calls.append(service_call)
+        reverse_call = device_command.build_reverse_service_call(
+            entity=entity,
+            action=action.action,
+            delay_seconds=action.duration_seconds,
+        )
+        if reverse_call is not None:
+            service_calls.append(reverse_call)
+
+    if not service_calls:
+        return [], ResponseText.ENTITY_NOT_FOUND
+    return service_calls, None
+
+
+def resolve_action_targets(
+        action: ParsedAction,
+        entity_index: EntityIndex,
+) -> list[HaObject]:
+    if action.target_entity_ids and not action.broad_target:
+        candidates = [
+            entity_index.by_id[entity_id]
+            for entity_id in action.target_entity_ids
+            if entity_id in entity_index.by_id
+        ]
+    else:
+        candidates = [
+            entity
+            for domain in action.target_domains
+            for entity in entity_index.by_domain.get(domain, ())
+        ]
+        candidates = filter_category_targets(candidates, action, entity_index)
+
+    candidates = filter_action_compatible_targets(candidates, action)
+    candidates = filter_action_location(candidates, action)
+    candidates = [
+        entity
+        for entity in candidates
+        if entity.area_id not in action.excluded_area_ids
+           and entity.floor_id not in action.excluded_floor_ids
+    ]
+    return unique_entities(candidates)
+
+
+def filter_category_targets(
+        entities: list[HaObject],
+        action: ParsedAction,
+        entity_index: EntityIndex,
+) -> list[HaObject]:
+    if not action.category_words:
+        return entities
+    if action.category_words & broad_words_for_domains(action.target_domains):
+        return entities
+    if action.category_words & {"отопление", "обогрев", "подогрев"}:
+        return [
+            entity
+            for entity in entities
+            if entity_domain(entity) == "climate"
+               and ("heat" in (entity.hvac_modes or []) or entity.state == "heat")
+        ]
+
+    matching = [
+        entity
+        for entity in entities
+        if entity_index.name_words[entity.entity_id] & action.category_words
+    ]
+    return matching or entities
+
+
+def filter_action_compatible_targets(
+        entities: list[HaObject],
+        action: ParsedAction,
+) -> list[HaObject]:
+    if action.action == "set_temperature":
+        return [
+            entity
+            for entity in entities
+            if entity_domain(entity) == "climate"
+        ]
+    if action.action in {"open", "close"}:
+        return [
+            entity
+            for entity in entities
+            if entity_domain(entity) == "cover"
+        ]
+    if action.action in {"turn_on", "turn_off"}:
+        return [
+            entity
+            for entity in entities
+            if device_command.is_turnable(entity)
+               and entity_domain(entity) != "scene"
+        ]
+    return entities
+
+
+def filter_action_location(
+        entities: list[HaObject],
+        action: ParsedAction,
+) -> list[HaObject]:
+    location_context = action.location_context
+    if action.all_locations and not location_context.has_explicit_location:
+        return entities
+    if location_context.has_explicit_location:
+        return [
+            entity
+            for entity in entities
+            if location_resolver.entity_in_location(entity, location_context)
+        ]
+    if location_context.has_location and (action.broad_target or len(entities) > 1):
+        room_entities = [
+            entity
+            for entity in entities
+            if location_resolver.entity_in_location(entity, location_context)
+        ]
+        return room_entities
+    return entities
+
+
+def is_ambiguous_action_target(
+        action: ParsedAction,
+        entities: list[HaObject],
+) -> bool:
+    if len(entities) <= 1:
+        return False
+    if action.all_locations or action.location_context.has_explicit_location:
+        return False
+    if action.broad_target and action.location_context.has_location:
+        return False
+    if action.broad_target:
+        area_ids = {entity.area_id for entity in entities if entity.area_id}
+        return len(area_ids) > 1
+    return True
+
+
+def detect_location_context(
+        command: NormalizedText,
+        entities: list[HaObject],
+        areas: list[Any],
+        floors: list[Any],
+        context: RequestContext,
+) -> location_resolver.LocationContext:
+    return location_resolver.detect_location_context(
+        command=command,
+        ha_objects=entities,
+        areas=areas,
+        floors=floors,
+        source_area_id=context.source_area_id,
+        source_area_name=context.source_area_name,
+        source_floor_id=context.source_floor_id,
+        source_floor_name=context.source_floor_name,
+        generic_words=GENERIC_WORDS,
+    )
+
+
+def detect_location_error(
+        command: NormalizedText,
+        entities: list[HaObject],
+        areas: list[Any],
+        floors: list[Any],
+) -> str | None:
+    if location_resolver.has_unknown_floor(command, entities, floors, GENERIC_WORDS):
+        return ResponseText.FLOOR_NOT_FOUND
+    if location_resolver.has_unknown_location(
+            command,
+            entities,
+            areas,
+            floors,
+            GENERIC_WORDS,
+    ):
+        return ResponseText.AREA_NOT_FOUND
+    return None
+
+
+def split_exclusion(
+        command: NormalizedText,
+) -> tuple[NormalizedText, NormalizedText | None]:
+    parts = re.split(r"\bкроме\b", command.original_text, maxsplit=1, flags=re.IGNORECASE)
+    if len(parts) == 1:
+        return command, None
+    return normalize(parts[0].strip()), normalize(parts[1].strip())
+
+
+def is_all_locations_action(
+        command: NormalizedText,
+        location_context: location_resolver.LocationContext,
+        exclude_command: NormalizedText | None,
+) -> bool:
+    words = normalized_words(command)
+    if words & location_resolver.ALL_LOCATIONS_WORDS:
+        return True
+    return bool(
+        words & location_resolver.ALL_WORDS
+        and (
+                exclude_command is not None
+                or not location_context.has_explicit_location
+        )
+    )
 
 
 def is_general_question(command: NormalizedText) -> bool:
     text = command.original_text.lower()
-    words = set(command.normal_forms) | set(command.tokens)
-    if re.search(r"\bчто\s+(?:делать|сделать)\b", text, re.I):
+    words = normalized_words(command)
+    if re.search(r"\bчто\s+(?:делать|сделать)\b", text, re.IGNORECASE):
         return True
     if "можно" in words and "ли" in words:
         return True
     if "если" in words:
         return True
     return bool(
-        set(command.normal_forms)
+        words
         & {"почему", "зачем", "кто", "когда", "где", "как", "чем", "каков", "какова"}
     )
 
 
-def find_entity_matches(
-        command: NormalizedText,
-        ha_objects: list[HaObject],
-        location_context: location_resolver.LocationContext | None = None,
-) -> list[EntityMatch]:
-    request_words = normalized_words(command)
-    requested_domains = detect_requested_domains(command, ha_objects)
-    search_objects = location_resolver.filter_entities_by_location(ha_objects, location_context)
-    state_category_words = category_head_words_for_domains(ha_objects, requested_domains)
-    bare_activation_shadow_words = shadow_words_for_bare_activation_domains(
-        ha_objects,
-        requested_domains,
-    )
-    # Сначала ищем точные и частичные совпадения по имени и alias.
-    has_implicit_source_match = False
-    scored_matches = [
-        match
-        for entity in search_objects
-        if (match := score_entity_match(
-            entity,
-            command,
-            request_words,
-            requested_domains,
-            state_category_words,
-            bool(location_context and location_context.has_explicit_location),
-            bare_activation_shadow_words,
-        ))
-           is not None
-    ]
-    if (
-            scored_matches
-            and location_context
-            and location_context.has_location
-            and not location_context.has_explicit_location
-            and requested_domains
-    ):
-        source_matches = [
-            match
-            for match in scored_matches
-            if location_resolver.entity_in_location(match.entity, location_context)
-        ]
-        if source_matches:
-            scored_matches = source_matches
-            has_implicit_source_match = True
-        elif not has_requested_specific_entity_word(command, ha_objects, requested_domains):
-            scored_matches = []
-
-    if not scored_matches:
-        broad_matches = broad_domain_matches(
-            command,
-            search_objects,
-            requested_domains,
-            location_context,
-        )
-        if broad_matches:
-            return broad_matches
-        return []
-
-    broad_matches = broad_domain_matches(
-        command,
-        search_objects,
-        requested_domains,
-        location_context,
-    )
-    allow_broad_override = bool(
-        (
-                location_context
-                and location_context.has_explicit_location
-        )
-        or (
-                location_context
-                and location_context.has_location
-                and is_implicit_location_domain_request(request_words, broad_match_domains(requested_domains))
-        )
-        or is_all_domain_request(request_words, broad_match_domains(requested_domains))
-    )
-    if broad_matches and allow_broad_override:
-        return broad_matches
-
-    best_score = max(match.score for match in scored_matches)
-    if best_score >= 100:
-        # При точном совпадении не подтягиваем похожие entity, кроме явных списков через "и".
-        allow_related_matches = "и" in command.normal_forms
-        if not allow_related_matches:
-            return [match for match in scored_matches if match.score == best_score]
-        exact_domains = {
-            match.entity.entity_id.split(".", maxsplit=1)[0]
-            for match in scored_matches
-            if match.score >= 100
-        }
+def filter_by_source_room(
+        entities: list[HaObject],
+        entity_index: EntityIndex,
+        context: RequestContext,
+) -> list[HaObject]:
+    if context.source_area_id:
         return [
-            match
-            for match in scored_matches
-            if match.score == best_score
-               or (
-                       allow_related_matches
-                       and
-                       50 <= match.score < 100
-                       and match.entity.entity_id.split(".", maxsplit=1)[0] in exact_domains
-               )
-        ]
-
-    if "и" in command.tokens and requested_domains:
-        return [
-            match
-            for match in scored_matches
-            if match.score >= 50
-               and match.entity.entity_id.split(".", maxsplit=1)[0] in requested_domains
-        ]
-
-    return [match for match in scored_matches if match.score == best_score]
-
-
-def score_entity_match(
-        entity: HaObject,
-        command: NormalizedText,
-        request_words: set[str],
-        requested_domains: set[str],
-        state_category_words: set[str],
-        has_explicit_location: bool,
-        bare_activation_shadow_words: set[str],
-) -> EntityMatch | None:
-    entity_domain = entity.entity_id.split(".", maxsplit=1)[0]
-    phrases = entity_phrases(entity)
-    generic_words = set(GENERIC_WORDS)
-    if entity_domain in state_query.STATE_ONLY_DOMAINS:
-        generic_words.update(state_category_words)
-
-    for phrase in phrases:
-        # Полная фраза из имени или alias сильнее отдельных слов.
-        if contains_phrase(command.normalized_text, phrase):
-            if is_shadowed_bare_activation_match(entity_domain, phrase, bare_activation_shadow_words):
-                continue
-            if is_weak_state_category_match(command, entity_domain, phrase, request_words, state_category_words,
-                                            has_explicit_location):
-                continue
-            return EntityMatch(entity=entity, score=100 + len(phrase.split()))
-    for phrase in raw_entity_phrases(entity):
-        if contains_phrase(command.original_text.lower(), phrase):
-            if is_shadowed_bare_activation_match(entity_domain, phrase, bare_activation_shadow_words):
-                continue
-            if is_weak_state_category_match(command, entity_domain, phrase, request_words, state_category_words,
-                                            has_explicit_location):
-                continue
-            return EntityMatch(entity=entity, score=100 + len(phrase.split()))
-
-    if requested_domains and entity_domain not in requested_domains:
-        return None
-    if entity_domain in device_command.BARE_ACTIVATION_DOMAINS and bare_activation_shadow_words:
-        return None
-
-    phrase_scores = [
-        score_phrase_words(phrase_words, request_words, generic_words)
-        for phrase_words in entity_phrase_word_sets(entity)
-    ]
-    climate_metadata_score = score_climate_metadata(entity, request_words, requested_domains)
-    if climate_metadata_score is not None:
-        phrase_scores.append(climate_metadata_score)
-    phrase_scores = [score for score in phrase_scores if score is not None]
-    if requested_domains and phrase_scores:
-        return EntityMatch(entity=entity, score=max(phrase_scores))
-
-    entity_words = entity_search_words(entity)
-    specific_words = entity_words - generic_words
-    if entity_domain in state_query.STATE_ONLY_DOMAINS and not requested_domains:
-        return None
-    if requested_domains and not specific_words and entity_domain in requested_domains:
-        return EntityMatch(entity=entity, score=30)
-
-    if not requested_domains and specific_words and specific_words <= request_words:
-        return EntityMatch(entity=entity, score=40 + len(specific_words))
-
-    return None
-
-
-def is_shadowed_bare_activation_match(
-        entity_domain: str,
-        phrase: str,
-        bare_activation_shadow_words: set[str],
-) -> bool:
-    if entity_domain not in device_command.BARE_ACTIVATION_DOMAINS:
-        return False
-    phrase_words = normalized_words(normalize(phrase))
-    specific_words = phrase_words - GENERIC_WORDS
-    return bool(specific_words and specific_words <= bare_activation_shadow_words)
-
-
-def shadow_words_for_bare_activation_domains(
-        ha_objects: list[HaObject],
-        requested_domains: set[str],
-) -> set[str]:
-    non_bare_domains = requested_domains - device_command.BARE_ACTIVATION_DOMAINS
-    if not non_bare_domains:
-        return set()
-
-    shadow_words: set[str] = set()
-    for entity in ha_objects:
-        if device_command.entity_domain(entity) not in non_bare_domains:
-            continue
-        shadow_words.update(entity_name_alias_words(entity) - GENERIC_WORDS)
-    return shadow_words
-
-
-def score_phrase_words(
-        phrase_words: set[str],
-        request_words: set[str],
-        generic_words: set[str],
-) -> int | None:
-    specific_words = phrase_words - generic_words
-    matched_specific_words = request_words & specific_words
-    if not matched_specific_words:
-        return None
-
-    unmatched_specific_words = specific_words - request_words
-    return 50 + (10 * len(matched_specific_words)) - len(unmatched_specific_words)
-
-
-def is_weak_state_category_match(
-        command: NormalizedText,
-        entity_domain: str,
-        phrase: str,
-        request_words: set[str],
-        state_category_words: set[str],
-        has_explicit_location: bool,
-) -> bool:
-    if has_explicit_location or entity_domain not in state_query.STATE_ONLY_DOMAINS:
-        return False
-    phrase_words = normalized_words(normalize(phrase))
-    if not phrase_words:
-        return False
-    normalized_phrase = normalize(phrase)
-    phrase_specific_words = phrase_words - GENERIC_WORDS
-    if len(normalized_phrase.normal_forms) == 1:
-        token_extra_words = normalized_token_words(command) - normalized_token_words(normalized_phrase) - GENERIC_WORDS
-        return bool(token_extra_words or request_words - GENERIC_WORDS - phrase_specific_words)
-    if phrase_words - GENERIC_WORDS - state_category_words:
-        return False
-    return bool(request_words - GENERIC_WORDS - state_category_words)
-
-
-def has_unmatched_state_query_words(command: NormalizedText, matches: list[EntityMatch]) -> bool:
-    matched_words: set[str] = set()
-    for match in matches:
-        for phrase in raw_entity_phrases(match.entity):
-            matched_words.update(normalized_words(normalize(phrase)))
-    request_words = normalized_form_words(command)
-    return bool(request_words - GENERIC_WORDS - matched_words)
-
-
-def score_climate_metadata(
-        entity: HaObject,
-        request_words: set[str],
-        requested_domains: set[str],
-) -> int | None:
-    if entity.entity_id.split(".", maxsplit=1)[0] != "climate":
-        return None
-    if "climate" not in requested_domains:
-        return None
-
-    if request_words & {"отопление", "обогрев", "подогрев"}:
-        if "heat" in (entity.hvac_modes or []) or entity.state == "heat":
-            return 65
-        return None
-
-    if "термостат" in request_words and entity.device_class == "thermostat":
-        return 65
-
-    return None
-
-
-def broad_domain_matches(
-        command: NormalizedText,
-        ha_objects: list[HaObject],
-        requested_domains: set[str],
-        location_context: location_resolver.LocationContext | None = None,
-) -> list[EntityMatch]:
-    all_ha_objects = ha_objects
-    broad_domains = broad_match_domains(requested_domains)
-    if location_context and location_context.has_location:
-        ha_objects = [
             entity
-            for entity in ha_objects
-            if location_resolver.entity_in_location(entity, location_context)
+            for entity in entities
+            if entity.area_id == context.source_area_id
         ]
-
-    # Широкие команды без комнаты ниже отсекаются как неоднозначные, если есть разные комнаты.
-    request_words = normalized_words(command)
-    if not requested_domains:
-        if not location_resolver.is_all_devices_request(request_words, location_context):
-            return []
+    if context.source_area_name:
+        source_name = normalize(context.source_area_name).normalized_text
         return [
-            EntityMatch(entity=entity, score=30)
-            for entity in ha_objects
-            if device_command.is_turnable(entity) and entity.entity_id.split(".", maxsplit=1)[0] != "scene"
+            entity
+            for entity in entities
+            if entity_index.normalized_area_names.get(entity.entity_id) == source_name
         ]
-
-    if location_resolver.is_all_devices_request(request_words, location_context):
-        return [
-            EntityMatch(entity=entity, score=30)
-            for entity in ha_objects
-            if device_command.is_turnable(entity) and entity.entity_id.split(".", maxsplit=1)[0] != "scene"
-        ]
-
-    if broad_domains <= state_query.STATE_ONLY_DOMAINS:
-        return []
-
-    if (
-            broad_domains == {"light"}
-            and location_context
-            and location_context.has_location
-            and "свет" in request_words
-    ):
-        return [
-            EntityMatch(entity=entity, score=30)
-            for entity in ha_objects
-            if entity.entity_id.split(".", maxsplit=1)[0] == "light"
-        ]
-
-    if (
-            broad_domains == {"light"}
-            and location_context
-            and location_context.has_explicit_location
-            and (
-            "свет" in request_words
-            or not has_requested_specific_entity_word(command, all_ha_objects, broad_domains)
-    )
-    ):
-        return [
-            EntityMatch(entity=entity, score=30)
-            for entity in ha_objects
-            if entity.entity_id.split(".", maxsplit=1)[0] == "light"
-        ]
-
-    if broad_domains == {"light"} and (request_words & location_resolver.ALL_WORDS):
-        return [
-            EntityMatch(entity=entity, score=30)
-            for entity in ha_objects
-            if entity.entity_id.split(".", maxsplit=1)[0] == "light"
-        ]
-
-    if is_all_domain_request(request_words, broad_domains):
-        return [
-            EntityMatch(entity=entity, score=30)
-            for entity in ha_objects
-            if entity.entity_id.split(".", maxsplit=1)[0] in broad_domains
-        ]
-
-    domain_generic_words = set(GENERIC_WORDS)
-    domain_generic_words.update(domain_request_words_for_domains(broad_domains))
-    domain_generic_words.update(category_words_for_domains(ha_objects, broad_domains))
-    domain_generic_words.update(location_resolver.location_words(ha_objects))
-
-    if request_words - domain_generic_words:
-        return []
-
-    return [
-        EntityMatch(entity=entity, score=30)
-        for entity in ha_objects
-        if entity.entity_id.split(".", maxsplit=1)[0] in broad_domains
-    ]
+    return entities
 
 
-def broad_match_domains(requested_domains: set[str]) -> set[str]:
-    non_bare_domains = requested_domains - device_command.BARE_ACTIVATION_DOMAINS
-    if non_bare_domains:
-        return non_bare_domains
-    return requested_domains
-
-
-def is_implicit_location_domain_request(request_words: set[str], requested_domains: set[str]) -> bool:
-    return requested_domains == {"light"} and "свет" in request_words
-
-
-def is_all_domain_request(request_words: set[str], requested_domains: set[str]) -> bool:
-    return bool(
-        requested_domains
-        and (
-                request_words & location_resolver.ALL_WORDS
-                or location_resolver.is_all_locations_request(request_words)
-        )
-    )
-
-
-def has_requested_specific_entity_word(
+def domain_words_in_request(
         command: NormalizedText,
-        ha_objects: list[HaObject],
-        requested_domains: set[str],
-) -> bool:
-    category_words = category_words_for_domains(ha_objects, requested_domains)
-    location_words = location_resolver.location_words(ha_objects)
-    entity_words: set[str] = set()
-    for entity in ha_objects:
-        if device_command.entity_domain(entity) in requested_domains:
-            entity_words.update(entity_name_alias_words(entity))
-    specific_words = entity_words - category_words - location_words - GENERIC_WORDS
-    return bool(normalized_words(command) & specific_words)
+        domains: set[str],
+) -> set[str]:
+    words = normalized_words(command)
+    result: set[str] = set()
+    for domain in domains:
+        result.update(words & DOMAIN_REQUEST_WORDS.get(domain, set()))
+    return result
 
 
-def detect_requested_domains(command: NormalizedText, ha_objects: list[HaObject]) -> set[str]:
-    request_words = normalized_words(command)
-    known_location_words = location_resolver.location_words(ha_objects)
-    domains: set[str] = set()
-    for entity in ha_objects:
-        domain = entity.entity_id.split(".", maxsplit=1)[0]
-        entity_words = entity_name_alias_words(entity) - GENERIC_WORDS - known_location_words
-        if request_words & entity_words:
-            domains.add(domain)
-        if (
-                domain == "climate"
-                and request_words & {"отопление", "обогрев", "подогрев"}
-                and ("heat" in (entity.hvac_modes or []) or entity.state == "heat")
-        ):
-            domains.add(domain)
-
-    present_domains = {device_command.entity_domain(entity) for entity in ha_objects}
-    for domain, words in DOMAIN_REQUEST_WORDS.items():
-        if domain in present_domains and request_words & words:
-            domains.add(domain)
-
-    return domains
-
-
-def domain_request_words_for_domains(domains: set[str]) -> set[str]:
+def broad_words_for_domains(domains: set[str]) -> set[str]:
     words: set[str] = set()
     for domain in domains:
-        words.update(DOMAIN_REQUEST_WORDS.get(domain, set()))
+        words.update(BROAD_DOMAIN_WORDS.get(domain, set()))
     return words
 
 
-def entity_phrases(entity: HaObject) -> list[str]:
-    # Home Assistant иногда присылает служебные псевдонимы, их нельзя использовать для поиска.
-    raw_phrases = [entity.name, *split_aliases(entity.aliases)]
-    phrases: list[str] = []
-    for phrase in raw_phrases:
-        normalized = normalize(phrase).normalized_text.strip()
-        if normalized and not normalized.startswith("computednametype"):
-            phrases.append(normalized)
-    return phrases
+def has_specific_target_words(
+        command: NormalizedText,
+        category_words: set[str],
+        entity_index: EntityIndex,
+) -> bool:
+    request_words = set(command.normal_forms)
+    remaining_words = (
+            request_words
+            - GENERIC_WORDS
+            - category_words
+            - entity_index.location_words
+    )
+    return any(not word.isdigit() for word in remaining_words)
+
+
+def build_entity_index(entities: list[HaObject]) -> EntityIndex:
+    by_id = {entity.entity_id: entity for entity in entities}
+    domains: set[str] = set()
+    by_domain_lists: dict[str, list[HaObject]] = {}
+    normalized_names: dict[str, tuple[str, ...]] = {}
+    raw_names: dict[str, tuple[str, ...]] = {}
+    name_words: dict[str, frozenset[str]] = {}
+    normalized_area_names: dict[str, str] = {}
+    location_values: set[str] = set()
+
+    for entity in entities:
+        domain = entity_domain(entity)
+        domains.add(domain)
+        by_domain_lists.setdefault(domain, []).append(entity)
+
+        entity_names = normalized_entity_names(entity)
+        normalized_names[entity.entity_id] = entity_names
+        raw_names[entity.entity_id] = raw_entity_names(entity)
+        name_words[entity.entity_id] = frozenset(
+            word
+            for name in entity_names
+            for word in name.split()
+        )
+
+        if entity.area_name:
+            normalized_area_names[entity.entity_id] = normalize(
+                entity.area_name,
+            ).normalized_text
+        location_values.update(
+            value
+            for value in (
+                entity.area_id,
+                entity.area_name,
+                entity.floor_id,
+                entity.floor_name,
+            )
+            if value
+        )
+
+    location_words = frozenset(
+        word
+        for value in location_values
+        for word in normalized_words(normalize(value))
+    )
+    return EntityIndex(
+        entities=entities,
+        by_id=by_id,
+        by_domain={
+            domain: tuple(domain_entities)
+            for domain, domain_entities in by_domain_lists.items()
+        },
+        domains=frozenset(domains),
+        normalized_names=normalized_names,
+        raw_names=raw_names,
+        name_words=name_words,
+        normalized_area_names=normalized_area_names,
+        location_words=location_words,
+    )
+
+
+def normalized_entity_names(entity: HaObject) -> tuple[str, ...]:
+    names: list[str] = []
+    for name in [entity.name, *split_aliases(entity.aliases)]:
+        normalized_name = normalize(name).normalized_text.strip()
+        if (
+                normalized_name
+                and not normalized_name.startswith("computednametype")
+                and normalized_name not in names
+        ):
+            names.append(normalized_name)
+    return tuple(names)
+
+
+def raw_entity_names(entity: HaObject) -> tuple[str, ...]:
+    return tuple(
+        name.strip().lower()
+        for name in [entity.name, *split_aliases(entity.aliases)]
+        if name.strip()
+        and not name.strip().lower().startswith("computednametype")
+    )
+
+
+def entity_domain(entity: HaObject) -> str:
+    return entity.entity_id.split(".", maxsplit=1)[0]
 
 
 def contains_phrase(text: str, phrase: str) -> bool:
@@ -897,77 +1184,12 @@ def contains_phrase(text: str, phrase: str) -> bool:
     return bool(re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text))
 
 
-def raw_entity_phrases(entity: HaObject) -> list[str]:
-    return [
-        phrase.strip().lower()
-        for phrase in [entity.name, *split_aliases(entity.aliases)]
-        if phrase.strip() and not phrase.strip().startswith("ComputedNameType.")
-    ]
-
-
-def entity_search_words(entity: HaObject) -> set[str]:
-    words = normalized_words(normalize(entity.name))
-    for alias in split_aliases(entity.aliases):
-        words.update(normalized_words(normalize(alias)))
-    return {word for word in words if word and word not in GENERIC_WORDS}
-
-
-def entity_name_alias_words(entity: HaObject) -> set[str]:
-    words = normalized_words(normalize(entity.name))
-    for alias in split_aliases(entity.aliases):
-        words.update(normalized_words(normalize(alias)))
-    return {word for word in words if word}
-
-
-def entity_phrase_word_sets(entity: HaObject) -> list[set[str]]:
-    phrase_sets: list[set[str]] = []
-    for phrase in [entity.name, *split_aliases(entity.aliases)]:
-        if not phrase.strip():
+def unique_entities(entities: list[HaObject]) -> list[HaObject]:
+    result: list[HaObject] = []
+    seen: set[str] = set()
+    for entity in entities:
+        if entity.entity_id in seen:
             continue
-        normalized = normalize(phrase)
-        phrase_sets.append(normalized_form_words(normalized))
-        phrase_sets.append(normalized_token_words(normalized))
-    return [phrase_set for phrase_set in phrase_sets if phrase_set]
-
-
-def category_words_for_domains(ha_objects: list[HaObject], domains: set[str]) -> set[str]:
-    word_counts: dict[tuple[str, str], int] = {}
-    for entity in ha_objects:
-        domain = device_command.entity_domain(entity)
-        if domain not in domains:
-            continue
-        for word in entity_name_alias_words(entity) - GENERIC_WORDS:
-            key = (domain, word)
-            word_counts[key] = word_counts.get(key, 0) + 1
-    return {
-        word
-        for (domain, word), count in word_counts.items()
-        if domain in domains and count > 1
-    }
-
-
-def category_head_words_for_domains(ha_objects: list[HaObject], domains: set[str]) -> set[str]:
-    word_counts: dict[tuple[str, str], int] = {}
-    for entity in ha_objects:
-        domain = device_command.entity_domain(entity)
-        if domain not in domains:
-            continue
-        for phrase in [entity.name, *split_aliases(entity.aliases)]:
-            normalized = normalize(phrase)
-            head_word = next(
-                (
-                    word
-                    for word in [*normalized.normal_forms, *normalized.tokens]
-                    if word and word not in GENERIC_WORDS
-                ),
-                None,
-            )
-            if not head_word:
-                continue
-            key = (domain, head_word)
-            word_counts[key] = word_counts.get(key, 0) + 1
-    return {
-        word
-        for (domain, word), count in word_counts.items()
-        if domain in domains and count > 1
-    }
+        seen.add(entity.entity_id)
+        result.append(entity)
+    return result

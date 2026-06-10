@@ -195,24 +195,6 @@ def get_value(entry: Any, key: str) -> Any:
     return getattr(entry, key, None)
 
 
-def filter_entities_by_location(
-        ha_objects: list[HaObject],
-        location_context: LocationContext | None,
-) -> list[HaObject]:
-    if (
-            not location_context
-            or not location_context.has_location
-            or not location_context.has_explicit_location
-    ):
-        return ha_objects
-
-    return [
-        entity
-        for entity in ha_objects
-        if entity_in_location(entity, location_context)
-    ]
-
-
 def entity_in_location(entity: HaObject, location_context: LocationContext) -> bool:
     if location_context.explicit_floor and not location_context.explicit_area:
         return bool(entity.floor_id and entity.floor_id in location_context.floor_ids)
@@ -310,28 +292,6 @@ def has_unknown_floor(
     non_generic_words = request_words - generic_words
     entity_words = all_entity_name_alias_words(ha_objects)
     return bool(non_generic_words - entity_words - known_floor_words)
-
-
-def is_ambiguous_location(matches: list[Any], location_context: LocationContext) -> bool:
-    if location_context.has_location:
-        return False
-    area_ids = {match.entity.area_id for match in matches if match.entity.area_id}
-    return len(area_ids) > 1
-
-
-def is_all_devices_request(
-        request_words: set[str],
-        location_context: LocationContext | None,
-) -> bool:
-    return bool(
-        request_words & ALL_WORDS
-        and location_context
-        and location_context.has_location
-    )
-
-
-def is_all_locations_request(request_words: set[str]) -> bool:
-    return bool(request_words & ALL_LOCATIONS_WORDS)
 
 
 def location_words(ha_objects: list[HaObject]) -> set[str]:

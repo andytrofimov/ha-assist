@@ -186,16 +186,16 @@
       | light  | turn_off | light.yeelink_ceil43_9a4b_light        |
       | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
 
-  Сценарий: Выключить все устройства на этаже
-    Когда пользователь говорит "выключи все на втором этаже"
-    Тогда ассистент вызывает сервисы:
-      | domain | service  | entity_id                              |
-      | light  | turn_off | light.svet_gostinnaia                  |
-      | light  | turn_off | light.svet_kukhnia                     |
-      | switch | turn_off | switch.chainik                         |
-      | light  | turn_off | light.svet_spalnia                     |
-      | light  | turn_off | light.yeelink_ceil43_9a4b_light        |
-      | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
+#  Сценарий: Выключить все устройства на этаже
+#    Когда пользователь говорит "выключи все на втором этаже"
+#    Тогда ассистент вызывает сервисы:
+#      | domain | service  | entity_id                              |
+#      | light  | turn_off | light.svet_gostinnaia                  |
+#      | light  | turn_off | light.svet_kukhnia                     |
+#      | switch | turn_off | switch.chainik                         |
+#      | light  | turn_off | light.svet_spalnia                     |
+#      | light  | turn_off | light.yeelink_ceil43_9a4b_light        |
+#      | light  | turn_off | light.yeelink_ceilc_a6e6_ambient_light |
 
   Сценарий: Отложенно включить весь свет во всех локациях
     Когда пользователь говорит "включи весь свет через десять секунд"

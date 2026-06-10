@@ -1,7 +1,6 @@
 from .ha_parser import HaObject
 from .text_normalizer import AgreementFeatures, NormalizedText, agree_adjective, get_text_normalizer
 
-STATE_ONLY_DOMAINS = {"binary_sensor", "sensor", "todo", "weather"}
 STATE_QUESTION_WORDS = {"сколько", "какой", "какая", "какое", "что"}
 POWER_ON_WORDS = {"включить"}
 POWER_OFF_WORDS = {"выключить"}

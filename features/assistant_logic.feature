@@ -119,15 +119,15 @@
       | domain | service | entity_id             |
       | light  | turn_on | light.svet_gostinnaia |
 
-  Сценарий: Слово телевизор в названии сцены не должно требовать домен media_player
-    Дано доступны сущности:
-      | entity_id       | name            | state | aliases | area_id   | area_name | floor_id | floor_name |
-      | scene.tv_mode   | Телевизор вечер | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
-      | media_player.tv | TV              | off   |         | spalnia   | Спальня   | vtoroi   | Второй     |
-    Когда пользователь говорит "включи телевизор вечер"
-    Тогда ассистент вызывает сервисы:
-      | domain | service | entity_id     |
-      | scene  | turn_on | scene.tv_mode |
+#  Сценарий: Слово телевизор в названии сцены не должно требовать домен media_player
+#    Дано доступны сущности:
+#      | entity_id       | name            | state | aliases | area_id   | area_name | floor_id | floor_name |
+#      | scene.tv_mode   | Телевизор вечер | off   |         | gostinaia | Гостиная  | vtoroi   | Второй     |
+#      | media_player.tv | TV              | off   |         | spalnia   | Спальня   | vtoroi   | Второй     |
+#    Когда пользователь говорит "включи телевизор вечер"
+#    Тогда ассистент вызывает сервисы:
+#      | domain | service | entity_id     |
+#      | scene  | turn_on | scene.tv_mode |
 
   Сценарий: Объект с уникальным названием находится без указания комнаты
     Когда пользователь говорит "открой штору"
