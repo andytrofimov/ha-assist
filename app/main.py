@@ -51,13 +51,6 @@ async def process_assist_request(request: AssistRequest) -> AssistResponse:
     return response
 
 
-def add_tts_trailing_period(text: str) -> str:
-    stripped_text = text.rstrip()
-    if not stripped_text or stripped_text.endswith("."):
-        return stripped_text
-    return f"{stripped_text}."
-
-
 def save_assist_request_snapshot(request: AssistRequest) -> None:
     LAST_ASSIST_REQUEST_FILE.write_text(
         json.dumps(

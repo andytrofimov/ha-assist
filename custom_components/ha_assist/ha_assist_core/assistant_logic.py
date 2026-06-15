@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -266,7 +267,8 @@ async def build_assist_result_with_llm(
         llm_api_key: str | None = None,
         llm_api_url: str | None = None,
 ) -> AssistLogicResult:
-    result = build_assist_result(
+    result = await asyncio.to_thread(
+        build_assist_result,
         text,
         ha_objects,
         areas=areas,

@@ -37,20 +37,12 @@ async def process_assist_payload(
         llm_api_key=llm_api_key,
         llm_api_url=llm_api_url,
     )
-    response_text = add_tts_trailing_period(result.response)
     remember_exchange(
         conversation_id=conversation_id,
         user_text=text,
-        assistant_text=response_text,
+        assistant_text=result.response,
     )
     return {
-        "response": response_text,
+        "response": result.response,
         "service_calls": result.service_calls,
     }
-
-
-def add_tts_trailing_period(text: str) -> str:
-    stripped_text = text.rstrip()
-    if not stripped_text or stripped_text.endswith("."):
-        return stripped_text
-    return f"{stripped_text}."
