@@ -28,7 +28,14 @@ from homeassistant.helpers import (
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_ASSIST_URL, CONF_LLM_API_KEY, CONF_LOCAL, DEFAULT_TIMEOUT
+from .const import (
+    CONF_ASSIST_URL,
+    CONF_LLM_API_KEY,
+    CONF_LLM_API_URL,
+    CONF_LOCAL,
+    DEFAULT_LLM_API_URL,
+    DEFAULT_TIMEOUT,
+)
 from .ha_assist_core.assist_processor import process_assist_payload
 
 _LOGGER = logging.getLogger(__name__)
@@ -148,6 +155,7 @@ class HaAssistConversationEntity(
             source_floor_id=payload.get("source_floor_id"),
             source_floor_name=payload.get("source_floor_name"),
             llm_api_key=self._llm_api_key(),
+            llm_api_url=self._llm_api_url(),
         )
 
     def _assist_payload(
@@ -324,6 +332,17 @@ class HaAssistConversationEntity(
             return None
         api_key = api_key.strip()
         return api_key or None
+
+    def _llm_api_url(self) -> str:
+        """Возвращает URL LLM API из настроек интеграции."""
+        api_url = self._entry.options.get(
+            CONF_LLM_API_URL,
+            self._entry.data.get(CONF_LLM_API_URL, DEFAULT_LLM_API_URL),
+        )
+        if not isinstance(api_url, str):
+            return DEFAULT_LLM_API_URL
+        api_url = api_url.strip()
+        return api_url or DEFAULT_LLM_API_URL
 
     async def _async_execute_service_call(
         self,

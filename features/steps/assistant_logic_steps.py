@@ -179,9 +179,11 @@ def step_when_user_says_with_llm(context: Any, text: str) -> None:
     async def fake_generate_llm_response(
             messages: list[dict[str, str]],
             api_key: str | None = None,
+            api_url: str | None = None,
     ) -> str:
         assert messages == [{"role": "user", "content": text}]
         assert api_key is None
+        assert api_url is None
         return context.llm_response
 
     original_generate_llm_response = assistant_logic.generate_llm_response

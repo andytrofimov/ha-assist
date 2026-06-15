@@ -264,6 +264,7 @@ async def build_assist_result_with_llm(
         llm_messages: list[ChatMessage] | None = None,
         previous_exchange: list[ChatMessage] | None = None,
         llm_api_key: str | None = None,
+        llm_api_url: str | None = None,
 ) -> AssistLogicResult:
     result = build_assist_result(
         text,
@@ -281,7 +282,11 @@ async def build_assist_result_with_llm(
 
     messages = llm_messages or [{"role": "user", "content": text}]
     logger.info("LLM fallback requested for non-smart-home text: %s", text)
-    llm_response = await generate_llm_response(messages, api_key=llm_api_key)
+    llm_response = await generate_llm_response(
+        messages,
+        api_key=llm_api_key,
+        api_url=llm_api_url,
+    )
     if llm_response is None:
         return result
     return AssistLogicResult(response=strip_trailing_period(llm_response))

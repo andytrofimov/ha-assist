@@ -7,7 +7,8 @@
           "name": "Name",
           "local": "Use local logic",
           "assist_url": "Assist service URL",
-          "llm_api_key": "DeepSeek API key"
+          "llm_api_key": "LLM API key",
+          "llm_api_url": "LLM API URL"
         }
       }
     },
@@ -26,7 +27,8 @@
           "name": "Name",
           "local": "Use local logic",
           "assist_url": "Assist service URL",
-          "llm_api_key": "DeepSeek API key"
+          "llm_api_key": "LLM API key",
+          "llm_api_url": "LLM API URL"
         }
       }
     },

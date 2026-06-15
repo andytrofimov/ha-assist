@@ -19,8 +19,10 @@ from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, Tex
 from .const import (
     CONF_ASSIST_URL,
     CONF_LLM_API_KEY,
+    CONF_LLM_API_URL,
     CONF_LOCAL,
     DEFAULT_ASSIST_URL,
+    DEFAULT_LLM_API_URL,
     DOMAIN,
 )
 
@@ -44,8 +46,10 @@ class HaAssistConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             assist_url = user_input[CONF_ASSIST_URL].strip()
+            llm_api_url = user_input[CONF_LLM_API_URL].strip()
             try:
                 assist_url = cv.url(assist_url)
+                llm_api_url = cv.url(llm_api_url)
             except vol.Invalid:
                 errors["base"] = "invalid_url"
             else:
@@ -58,6 +62,7 @@ class HaAssistConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_ASSIST_URL: assist_url,
                         CONF_LOCAL: user_input[CONF_LOCAL],
                         CONF_LLM_API_KEY: user_input.get(CONF_LLM_API_KEY, "").strip(),
+                        CONF_LLM_API_URL: llm_api_url,
                     },
                 )
 
@@ -68,6 +73,7 @@ class HaAssistConfigFlow(ConfigFlow, domain=DOMAIN):
                     name="Dysha's Assistant",
                     local=True,
                     assist_url=DEFAULT_ASSIST_URL,
+                    llm_api_url=DEFAULT_LLM_API_URL,
                 ),
                 user_input,
             ),
@@ -91,8 +97,10 @@ class HaAssistOptionsFlow(OptionsFlow):
 
         if user_input is not None:
             assist_url = user_input[CONF_ASSIST_URL].strip()
+            llm_api_url = user_input[CONF_LLM_API_URL].strip()
             try:
                 assist_url = cv.url(assist_url)
+                llm_api_url = cv.url(llm_api_url)
             except vol.Invalid:
                 errors["base"] = "invalid_url"
             else:
@@ -103,6 +111,7 @@ class HaAssistOptionsFlow(OptionsFlow):
                         CONF_LOCAL: user_input[CONF_LOCAL],
                         CONF_ASSIST_URL: assist_url,
                         CONF_LLM_API_KEY: user_input.get(CONF_LLM_API_KEY, "").strip(),
+                        CONF_LLM_API_URL: llm_api_url,
                     },
                 )
 
@@ -122,6 +131,10 @@ class HaAssistOptionsFlow(OptionsFlow):
                     CONF_LLM_API_KEY,
                     self._entry.data.get(CONF_LLM_API_KEY, ""),
                 ),
+                llm_api_url=self._entry.options.get(
+                    CONF_LLM_API_URL,
+                    self._entry.data.get(CONF_LLM_API_URL, DEFAULT_LLM_API_URL),
+                ),
             ),
             errors=errors,
         )
@@ -132,6 +145,7 @@ def assist_schema(
         local: bool,
         assist_url: str,
         llm_api_key: str = "",
+        llm_api_url: str = DEFAULT_LLM_API_URL,
 ) -> vol.Schema:
     """Возвращает общую схему первичной настройки и options flow."""
     return vol.Schema(
@@ -143,6 +157,9 @@ def assist_schema(
             ),
             vol.Optional(CONF_LLM_API_KEY, default=llm_api_key): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            ),
+            vol.Required(CONF_LLM_API_URL, default=llm_api_url): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.URL)
             ),
         }
     )

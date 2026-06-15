@@ -17,6 +17,7 @@ async def process_assist_payload(
         source_floor_id: str | None = None,
         source_floor_name: str | None = None,
         llm_api_key: str | None = None,
+        llm_api_url: str | None = None,
 ) -> dict[str, Any]:
     ha_objects = [
         entity if isinstance(entity, HaObject) else HaObject.model_validate(entity)
@@ -34,6 +35,7 @@ async def process_assist_payload(
         llm_messages=build_llm_messages(conversation_id, text),
         previous_exchange=get_previous_exchange(conversation_id),
         llm_api_key=llm_api_key,
+        llm_api_url=llm_api_url,
     )
     response_text = add_tts_trailing_period(result.response)
     remember_exchange(
