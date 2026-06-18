@@ -2,3 +2,5 @@
 __pycache__/
 .pytest_cache/
 deepseek_api_key.txt
+esphome/secrets.yaml
+esphome/.esphome

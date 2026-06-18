@@ -18,7 +18,6 @@ substitutions:
   amp_ctrl: 8 #9 #Extended IO pin that controls the PA_EN on the TCA9555
   i2c_scl: GPIO10
   i2c_sda: GPIO11
-  rtc_int: 5 #ExtendedIO
 
   #mic lookup
   mic_channel_0: 'left'
@@ -64,17 +63,6 @@ esphome:
             then:
               - lambda: id(init_in_progress) = false;
               - script.execute: control_leds
-    - priority: -100
-      then:
-        - lambda: |-
-            id(alarm_time).publish_state(id(saved_alarm_time));
-        - lambda: |-
-            auto call = id(alarm_action).make_call();
-            call.set_option(id(saved_alarm_action));
-            call.perform();
-        - lambda: |-
-            setenv("TZ", id(saved_time_zone).c_str(), 1);
-            tzset();
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -140,26 +128,6 @@ api:
     - action: stop_va
       then:
         - voice_assistant.stop
-    - action: set_alarm_time
-      variables:
-        alarm_time_hh_mm: string
-      then:
-        - lambda: |-
-            if (alarm_time_hh_mm.length() == 5 &&
-              isdigit(alarm_time_hh_mm[0]) && isdigit(alarm_time_hh_mm[1]) &&
-              isdigit(alarm_time_hh_mm[3]) && isdigit(alarm_time_hh_mm[4])) {
-                id(alarm_time).publish_state(alarm_time_hh_mm);
-                id(saved_alarm_time) = alarm_time_hh_mm;
-              }
-    - action: set_time_zone
-      variables:
-        posix_time_zone: string
-      then:
-        - lambda: |-
-            setenv("TZ", posix_time_zone.c_str(), 1);
-            tzset();
-            id(saved_time_zone) = posix_time_zone;
-            id(publish_current_time).execute();
   on_client_connected:
     - script.execute: control_leds
   on_client_disconnected:
@@ -193,22 +161,6 @@ psram:
   mode: octal
   speed: 80MHz
 
-time:
-  - platform: homeassistant
-    #- platform: pcf85063
-    id: rtc
-    #  address: 0x51
-    #RTC_INT = $rtc_int # extIO 5
-    #  i2c_id: internal_i2c
-
-    on_time:
-      - seconds: 0
-        minutes: /1
-        then:
-          - script.execute: check_alarm
-    on_time_sync:
-      - script.execute: publish_current_time
-
 light:
   - platform: esp32_rmt_led_strip
     id: status_ring
@@ -237,10 +189,23 @@ light:
           max_brightness: 100%
           transition_length: 300ms
           update_interval: 16ms
-      - addressable_rainbow:
-          name: "Rainbow Slow"
-          speed: 6
-          width: 7
+      - addressable_color_wipe:
+          name: "Blue Violet Pink"
+          colors:
+            - red: 0%
+              green: 20%
+              blue: 100%
+              num_leds: 2
+            - red: 55%
+              green: 0%
+              blue: 100%
+              num_leds: 2
+            - red: 100%
+              green: 0%
+              blue: 45%
+              num_leds: 3
+          add_led_interval: 120ms
+          reverse: false
       - addressable_color_wipe:
           name: "Wipe"
 
@@ -385,7 +350,6 @@ media_player:
       if:
         condition:
           and:
-            - switch.is_off: alarm_ringing
             - not:
                 voice_assistant.is_running:
             - not:
@@ -403,8 +367,6 @@ media_player:
           - delay: 100ms  # Debounce
           - script.execute: control_leds_volume_changed
     files:
-      - id: alarm_sound
-        file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/timer_finished.flac
       - id: wake_word_triggered_sound
         file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/wake_word_triggered.flac
       # - id: error_cloud_expired
@@ -537,34 +499,28 @@ micro_wake_word:
   on_wake_word_detected:
     - if:
         condition:
-          switch.is_on: alarm_ringing
+          voice_assistant.is_running:
         then:
-          - switch.turn_off: alarm_ringing
+          - voice_assistant.stop:
         else:
           - if:
               condition:
-                voice_assistant.is_running:
+                media_player.is_announcing:
               then:
-                - voice_assistant.stop:
+                - media_player.stop:
+                    announcement: true
               else:
                 - if:
                     condition:
-                      media_player.is_announcing:
+                      switch.is_on: wake_sound
                     then:
-                      - media_player.stop:
-                          announcement: true
-                    else:
-                      - if:
-                          condition:
-                            switch.is_on: wake_sound
-                          then:
-                            - script.execute:
-                                id: play_sound
-                                priority: true
-                                sound_file: !lambda return id(wake_word_triggered_sound);
-                            - delay: 300ms
-                      - voice_assistant.start:
-                          wake_word: !lambda return wake_word;
+                      - script.execute:
+                          id: play_sound
+                          priority: true
+                          sound_file: !lambda return id(wake_word_triggered_sound);
+                      - delay: 300ms
+                - voice_assistant.start:
+                    wake_word: !lambda return wake_word;
 
 globals:
   - id: led_ring_color_r
@@ -591,18 +547,6 @@ globals:
     type: int
     restore_value: no
     initial_value: ${voice_assist_not_ready_phase_id}
-  - id: saved_alarm_time
-    type: std::string
-    restore_value: yes
-    initial_value: '"Unknown"'
-  - id: saved_time_zone
-    type: std::string
-    restore_value: yes
-    initial_value: '"UTC0"'
-  - id: saved_alarm_action
-    type: std::string
-    restore_value: yes
-    initial_value: '"Play sound"'
 
 
 script:
@@ -653,15 +597,14 @@ script:
       - lambda: |-
           const bool wifi_connected = id(wifi_id).is_connected();
           const bool api_connected  = id(api_id).is_connected();
-          const bool ringing        = id(alarm_ringing).state;
           const bool improv_ble     = id(improv_ble_in_progress);
           const bool init_progress  = id(init_in_progress);
           const int  phase          = id(voice_assistant_phase);
 
           ESP_LOGD("led",
-                   "control_leds: wifi=%d api=%d improv=%d init=%d ringing=%d phase=%d",
+                   "control_leds: wifi=%d api=%d improv=%d init=%d phase=%d",
                    (int)wifi_connected, (int)api_connected, (int)improv_ble, (int)init_progress,
-                   (int)ringing, phase);
+                   phase);
 
           auto set = [&](const char* effect, float r, float g, float b) {
             id(led_set_effect).execute(effect, r, g, b);
@@ -673,7 +616,7 @@ script:
           }
           if (init_progress) {                       // Boot/init
             //if (wifi_connected) set("Pulse Fast", 0.09, 0.73, 0.95); else set("Pulse Slow", 0.09, 0.73, 0.95);
-            if (wifi_connected) set("Rainbow Slow", 0.9, 0.1, 0.85); else set("Rainbow Slow", 1.0, 0.1, 0.1);
+            set("Blue Violet Pink", 0.1, 0.0, 1.0);
             id(play_sound).execute(1, id(wake_word_triggered_sound)); //TEST
             return;
           }
@@ -681,21 +624,17 @@ script:
             set("Pulse Medium", 1.0, 0.0, 0.0);
             return;
           }
-          if (ringing) {
-            set("Pulse Fast", 0.6, 0.0, 0.6);
-            return;
-          }
 
           // Voice assistant phases
           switch (phase) {
             case ${voice_assist_waiting_for_command_phase_id}: // just woke
-              set("solid", 0.5, 0.0, 0.5);  // calm solid violet
+              set("Pulse Slow", 0.5, 0.0, 0.5);
               return;
             case ${voice_assist_listening_for_command_phase_id}:
-              set("Pulse Medium", 0.8, 0.0, 0.8);
+              set("Pulse Slow", 0.8, 0.0, 0.8);
               return;
             case ${voice_assist_thinking_phase_id}:
-              set("Pulse Slow", 0.6, 0.0, 0.6);
+              set("Pulse Fast", 0.6, 0.0, 0.6);
               return;
             case ${voice_assist_replying_phase_id}:
               set("Wipe", 0.6, 0.0, 0.6);
@@ -728,35 +667,6 @@ script:
       - delay: 1.2s
       - script.execute: control_leds
 
-  # Звук будильника
-  - id: ring_alarm
-    then:
-      - script.execute: enable_repeat_one
-      - script.execute:
-          id: play_sound
-          priority: true
-          sound_file: !lambda return id(alarm_sound);
-
-  - id: enable_repeat_one
-    then:
-      - lambda: |-
-          id(external_media_player)
-            ->make_call()
-            .set_command(media_player::MediaPlayerCommand::MEDIA_PLAYER_COMMAND_REPEAT_ONE)
-            .set_announcement(true)
-            .perform();
-          id(external_media_player)->set_playlist_delay_ms(speaker::AudioPipelineType::ANNOUNCEMENT, 500);
-
-  - id: disable_repeat
-    then:
-      - lambda: |-
-          id(external_media_player)
-            ->make_call()
-            .set_command(media_player::MediaPlayerCommand::MEDIA_PLAYER_COMMAND_REPEAT_OFF)
-            .set_announcement(true)
-            .perform();
-          id(external_media_player)->set_playlist_delay_ms(speaker::AudioPipelineType::ANNOUNCEMENT, 0);
-
   - id: play_sound
     parameters:
       priority: bool
@@ -778,54 +688,11 @@ script:
   - id: activate_stop_word_once
     then:
       - delay: 1s
-      - if:
-          condition:
-            switch.is_off: alarm_ringing
-          then:
-            - micro_wake_word.enable_model: stop
-            - wait_until:
-                not:
-                  media_player.is_announcing:
-            - if:
-                condition:
-                  switch.is_off: alarm_ringing
-                then:
-                  - micro_wake_word.disable_model: stop
-
-  # Будильник и публикация текущего времени
-  - id: check_alarm
-    then:
-      - lambda: |-
-          id(publish_current_time).execute();
-          if (id(alarm_on).state && id(alarm_time).has_state()) {
-            auto set_alarm_time = id(alarm_time).state;
-            if (set_alarm_time.length() == 5 &&
-                isdigit(set_alarm_time[0]) && isdigit(set_alarm_time[1]) &&
-                isdigit(set_alarm_time[3]) && isdigit(set_alarm_time[4])) {
-              auto alarm_hour = std::stoi(set_alarm_time.substr(0, 2));
-              auto alarm_minute = std::stoi(set_alarm_time.substr(3, 2));
-
-              auto time_now = id(rtc).now();
-              if (time_now.hour == alarm_hour && time_now.minute == alarm_minute) {
-                auto action = id(alarm_action).state;
-                if (action == "Play sound") {
-                  id(alarm_ringing).turn_on();
-                } else if (action == "Send event") {
-                  id(send_alarm_event).execute();
-                } else if (action == "Sound and event") {
-                  id(alarm_ringing).turn_on();
-                  id(send_alarm_event).execute();
-                }
-              }
-            } else {
-              ESP_LOGW("alarm", "Incorrect alarm time setting");
-            }
-          }
-
-  - id: send_alarm_event
-    then:
-      - homeassistant.event:
-          event: esphome.alarm_ringing
+      - micro_wake_word.enable_model: stop
+      - wait_until:
+          not:
+            media_player.is_announcing:
+      - micro_wake_word.disable_model: stop
 
   - id: send_tts_uri_event
     parameters:
@@ -844,18 +711,6 @@ script:
           event: esphome.stt_text
           data:
             text: !lambda return stt_text;
-
-  - id: publish_current_time
-    mode: single
-    then:
-      - lambda: |-
-          static std::string last_time_string = "";
-          auto time_now = id(rtc).now();
-          std::string current_time_string = time_now.strftime("%H:%M");
-          if (current_time_string != last_time_string) {
-            id(current_time).publish_state(current_time_string);
-            last_time_string = current_time_string;
-          }
 
 select:
   - platform: template
@@ -882,20 +737,6 @@ select:
     id: logger_select
     name: Logger Level
     disabled_by_default: true
-  - platform: template
-    optimistic: true
-    name: "Alarm action"
-    id: alarm_action
-    icon: mdi:bell-plus
-    options:
-      - "Play sound"
-      - "Send event"
-      - "Sound and event"
-    initial_option: "Play sound"
-    on_value:
-      then:
-        - lambda: |-
-            id(saved_alarm_action) = x;
 
 
 switch:
@@ -917,47 +758,6 @@ switch:
     entity_category: config
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
-
-  - platform: template
-    id: alarm_ringing
-    optimistic: true
-    internal: true
-    restore_mode: ALWAYS_OFF
-    on_turn_off:
-      - micro_wake_word.disable_model: stop
-      - script.execute: disable_repeat
-      - if:
-          condition:
-            media_player.is_announcing:
-          then:
-            media_player.stop:
-              announcement: true
-      - mixer_speaker.apply_ducking:
-          id: media_mixing_input
-          decibel_reduction: 0
-          duration: 1.0s
-      - script.execute: control_leds
-    on_turn_on:
-      - mixer_speaker.apply_ducking:
-          id: media_mixing_input
-          decibel_reduction: 20
-          duration: 0.0s
-      - micro_wake_word.enable_model: stop
-      - script.execute: ring_alarm
-      - script.execute: control_leds
-      - delay: 15min
-      - switch.turn_off: alarm_ringing
-
-  - platform: template
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
-    id: alarm_on
-    icon: mdi:bell-badge
-    name: "Alarm on"
-    on_turn_on:
-      - script.execute: control_leds
-    on_turn_off:
-      - script.execute: control_leds
 
 number:
   - platform: template # MIC DEBUG
@@ -1029,12 +829,9 @@ number:
                 id: status_ring
                 brightness: !lambda 'return x;'
 
-text_sensor:
-  - platform: template
-    name: "Alarm time"
-    id: alarm_time
-    icon: mdi:bell-ring
-  - platform: template
-    name: "Current device time"
-    id: current_time
-    icon: mdi:clock
+sensor:
+  - platform: uptime
+    id: uptime_sensor
+    name: "Uptime"
+    entity_category: diagnostic
+    update_interval: 60s
