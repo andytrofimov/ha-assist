@@ -368,7 +368,7 @@ media_player:
           - script.execute: control_leds_volume_changed
     files:
       - id: wake_word_triggered_sound
-        file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/wake_word_triggered.flac
+        file: https://raw.githubusercontent.com/andytrofimov/ha-assist/master/esphome/sounds/activation.flac
       # - id: error_cloud_expired
       #   file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/error_cloud_expired.mp3
 
